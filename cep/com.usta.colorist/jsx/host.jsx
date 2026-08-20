@@ -497,25 +497,29 @@ function USTA_beginExport() {
   }
 }
 
-function USTA_exportOne(index) {
-  var seq, track, clip, t, ticks, folder, qeSeq, name, wrote, nfiles, listed, stem;
+function USTA_exportOne(index, frac) {
+  var seq, track, clip, t, ticks, folder, qeSeq, name, wrote, nfiles, listed, stem, dur;
   try {
     index = parseInt(index, 10);
+    if (frac === undefined || frac === null || frac === "") frac = 0.4;
+    frac = parseFloat(frac);
+    if (!frac) frac = 0.4;
     if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
     seq = app.project.activeSequence;
     track = seq.videoTracks[0];
     if (index < 0 || index >= track.clips.numItems) return '{"ok":0,"err":"index"}';
     clip = track.clips[index];
     name = clip.name;
-    t = clip.start.seconds + clip.duration.seconds * 0.35;
+    dur = clip.duration.seconds;
+    t = clip.start.seconds + dur * frac;
     ticks = Math.round(t * 254016000000).toString();
     try { seq.setPlayerPosition(ticks); } catch (ePos) {}
     try { app.enableQE(); } catch (eQ) {}
     try { qeSeq = qe.project.getActiveSequence(); } catch (eQs) { qeSeq = null; }
-    try { $.sleep(180); } catch (eSl) {}
+    try { $.sleep(140); } catch (eSl) {}
     folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
     if (!folder.exists) folder.create();
-    stem = USTA_stem(folder, index);
+    stem = folder.fsName + USTA_sep() + "usta_" + USTA_pad(index + 1) + "_" + Math.round(frac * 100);
     wrote = USTA_tryWritePng(seq, qeSeq, stem, t);
     nfiles = 0;
     listed = "";
@@ -527,6 +531,7 @@ function USTA_exportOne(index) {
       ',"name":"' + USTA_esc(name) +
       '","path":"' + USTA_esc(wrote.path || "") +
       '","exists":' + (wrote.path ? 1 : 0) +
+      ',"dur":' + dur +
       ',"method":"' + USTA_esc(wrote.m) +
       '","err":"' + USTA_esc(wrote.err) +
       '","tc":"' + USTA_esc(wrote.tc) +
@@ -549,4 +554,167 @@ function USTA_openTemp() {
   } catch (e) {
     return "ERR " + e;
   }
+}
+
+function USTA_walkFindAdj(item, acc) {
+  var i, n;
+  if (!item) return;
+  try {
+    n = ("" + item.name).toLowerCase();
+    if (item.isAdjustmentLayer && item.isAdjustmentLayer()) acc.push(item);
+    else if (n.indexOf("usta_print") >= 0) acc.push(item);
+  } catch (e0) {}
+  try {
+    if (item.children) {
+      for (i = 0; i < item.children.numItems; i++) USTA_walkFindAdj(item.children[i], acc);
+    }
+  } catch (e1) {}
+}
+
+function USTA_ensureV2() {
+  var seq, qeSeq;
+  seq = app.project.activeSequence;
+  try {
+    if (seq.videoTracks.numTracks >= 2) return seq.videoTracks[1];
+  } catch (e0) {}
+  try {
+    qeSeq = qe.project.getActiveSequence();
+    qeSeq.addTracks(1, 0, 0);
+  } catch (e1) {
+    try { qeSeq.addTrack(); } catch (e2) {}
+  }
+  try {
+    if (seq.videoTracks.numTracks >= 2) return seq.videoTracks[1];
+  } catch (e3) {}
+  return null;
+}
+
+function USTA_getPrintClip() {
+  var seq, v2, i, clip, item, acc, w, h;
+  seq = app.project.activeSequence;
+  v2 = USTA_ensureV2();
+  if (v2) {
+    for (i = 0; i < v2.clips.numItems; i++) {
+      if (("" + v2.clips[i].name).toLowerCase().indexOf("usta_print") >= 0) return v2.clips[i];
+    }
+  }
+  acc = [];
+  USTA_walkFindAdj(app.project.rootItem, acc);
+  item = acc.length ? acc[0] : null;
+  if (!item) {
+    try {
+      w = seq.frameSizeHorizontal;
+      h = seq.frameSizeVertical;
+      qe.project.newAdjustmentLayer(w, h);
+    } catch (eA) {
+      try { qe.project.newAdjustmentLayer("USTA_PRINT", w, h); } catch (eB) {}
+    }
+    acc = [];
+    USTA_walkFindAdj(app.project.rootItem, acc);
+    item = acc.length ? acc[0] : null;
+  }
+  if (!item || !v2) return null;
+  try {
+    v2.overwriteClip(item, 0);
+  } catch (eO) {
+    try { v2.insertClip(item, 0); } catch (eI) { return null; }
+  }
+  clip = null;
+  try { clip = v2.clips[v2.clips.numItems - 1]; } catch (eC) {}
+  if (!clip) {
+    try { clip = v2.clips[0]; } catch (eD) {}
+  }
+  if (!clip) return null;
+  try { clip.name = "USTA_PRINT"; } catch (eN) {}
+  try { clip.end = seq.end; } catch (eE) {}
+  return clip;
+}
+
+function USTA_lumetriLast(clip) {
+  var i, last, name;
+  last = null;
+  if (!clip || !clip.components) return null;
+  for (i = 0; i < clip.components.numItems; i++) {
+    name = ("" + clip.components[i].displayName).toLowerCase();
+    if (name.indexOf("lumetri") >= 0) last = clip.components[i];
+  }
+  return last;
+}
+
+function USTA_lumetriCount(clip) {
+  var i, n;
+  n = 0;
+  if (!clip || !clip.components) return 0;
+  for (i = 0; i < clip.components.numItems; i++) {
+    if (("" + clip.components[i].displayName).toLowerCase().indexOf("lumetri") >= 0) n++;
+  }
+  return n;
+}
+
+function USTA_applyPrintJson(raw) {
+  var L, g, clip, lum, qeTrack, qeItem, wrote, i, seq, track, n;
+  try {
+    L = eval("(" + raw + ")");
+  } catch (e0) {
+    return "ERR print json " + e0;
+  }
+  g = {
+    t: L.temperature || 0,
+    i: L.tint || 0,
+    e: L.exposure || 0,
+    c: L.contrast || 0,
+    h: L.highlights || 0,
+    s: L.shadows || 0,
+    w: L.whites || 0,
+    b: L.blacks || 0,
+    sat: L.saturation || 0,
+    v: L.vibrance || 0,
+    ff: L.fadedFilm || 0,
+    vg: L.vignette || 0,
+    sl: L.shadowLuma || 0,
+    hl: L.highlightLuma || 0
+  };
+  USTA_beginUndo("USTA Print");
+  try {
+    app.enableQE();
+  } catch (eQ) {}
+  clip = USTA_getPrintClip();
+  if (clip) {
+    lum = USTA_findLumetri(clip);
+    if (!lum) {
+      try {
+        qeTrack = qe.project.getActiveSequence().getVideoTrackAt(1);
+        qeItem = qeTrack.getItemAt(0);
+        USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
+        lum = USTA_findLumetri(clip);
+      } catch (eL) {}
+    }
+    if (lum) {
+      wrote = USTA_applyToComponent(lum, g);
+      USTA_endUndo();
+      return "PRINT V2 USTA_PRINT / " + wrote + " param. Look buradan kis.";
+    }
+  }
+  seq = app.project.activeSequence;
+  track = seq.videoTracks[0];
+  n = 0;
+  try {
+    qeTrack = qe.project.getActiveSequence().getVideoTrackAt(0);
+  } catch (eT) {
+    qeTrack = null;
+  }
+  for (i = 0; i < track.clips.numItems; i++) {
+    clip = track.clips[i];
+    qeItem = qeTrack ? USTA_qeItemAt(qeTrack, i) : null;
+    if (USTA_lumetriCount(clip) < 2 && qeItem) {
+      USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
+    }
+    lum = USTA_lumetriLast(clip);
+    if (lum) {
+      USTA_applyToComponent(lum, g);
+      n++;
+    }
+  }
+  USTA_endUndo();
+  return "PRINT fallback 2. Lumetri x" + n + " (V2 AL olusmadi)";
 }

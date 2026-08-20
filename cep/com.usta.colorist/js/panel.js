@@ -190,19 +190,18 @@
           return;
         }
         var look = document.getElementById("look").value || "belgesel";
-        var graded = window.USTAEngine.gradeAll(analyses, look, 0.9);
+        var graded = window.USTAEngine.gradeAll(analyses, look, 0.88);
         var lines = [];
         lines.push(
           "Analiz " +
             okN +
             "/" +
             info.count +
-            " PNG " +
-            exported +
             "  look " +
             look +
-            "  hero #" +
-            (graded.heroIndex + 1)
+            "  sahneler " +
+            graded.scenes +
+            "  V1=trim  V2=print"
         );
         for (k = 0; k < graded.lumetri.length; k++) {
           var g = graded.lumetri[k];
@@ -223,19 +222,23 @@
               " H" +
               g.highlights +
               " Sat" +
-              (100 + g.saturation) +
-              " Vg" +
-              g.vignette +
-              " FF" +
-              Math.round(g.fadedFilm) +
-              " HL" +
-              g.highlightLuma
+              (100 + g.saturation)
           );
         }
-        log(lines.join("\n") + "\nLumetri yaziliyor...");
+        log(lines.join("\n") + "\nV1 trim yaziliyor...");
         applyList(graded.lumetri, function (res) {
-          busy = false;
-          log(lines.join("\n") + "\n" + (res && res !== "undefined" ? res : "yazildi"));
+          var raw = JSON.stringify(graded.print);
+          var escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          evalScript('USTA_applyPrintJson("' + escaped + '")', function (pres) {
+            busy = false;
+            log(
+              lines.join("\n") +
+                "\n" +
+                (res && res !== "undefined" ? res : "trim ok") +
+                "\n" +
+                (pres && pres !== "undefined" ? pres : "print ok")
+            );
+          });
         });
       }
       function next() {
@@ -243,99 +246,65 @@
           finish();
           return;
         }
-        log(
-          "Kare " +
-            (i + 1) +
-            "/" +
-            info.count +
-            " aktar + analiz..."
-        );
-        evalScript("USTA_exportOne(" + i + ")", function (res) {
-          var one;
-          try {
-            one = JSON.parse(String(res || "{}"));
-          } catch (e1) {
-            names[i] = "";
-            analyses[i] = null;
+        var fracs = [0.2, 0.42, 0.72];
+        var samples = [];
+        var fi = 0;
+        function nextFrac() {
+          if (fi >= fracs.length) {
+            analyses[i] = window.USTAEngine.medianAnalyses
+              ? window.USTAEngine.medianAnalyses(samples)
+              : samples[0] || null;
             i++;
             next();
             return;
           }
-          if (i < 3) {
-            log(
-              "Kare " +
-                (i + 1) +
-                " method=" +
-                (one.method || "-") +
-                " exists=" +
-                one.exists +
-                " nfiles=" +
-                one.nfiles +
-                " tc=" +
-                (one.tc || "") +
-                " cti=" +
-                (one.cti || "") +
-                " fps=" +
-                one.fps +
-                " listed=" +
-                (one.listed || "") +
-                " methods=" +
-                (one.methods || "") +
-                " err=" +
-                (one.err || "")
-            );
-          }
-          if (i >= 2 && exported === 0 && !one.exists) {
-            busy = false;
-            log(
-              "Ilk 3 kare yazilmadi, durdu.\n" +
-                "method=" +
-                (one.method || "-") +
-                " exists=" +
-                one.exists +
-                " nfiles=" +
-                one.nfiles +
-                " listed=" +
-                (one.listed || "") +
-                "\ntc=" +
-                (one.tc || "") +
-                " cti=" +
-                (one.cti || "") +
-                " fps=" +
-                one.fps +
-                "\npath=" +
-                (one.path || "") +
-                "\nmethods=" +
-                (one.methods || "") +
-                "\nerr=" +
-                (one.err || res) +
-                "\nKlasor: " +
-                info.folder +
-                "\nMasaustu\\USTA_frames icine bak: .png.png olabilir."
-            );
-            return;
-          }
-          names[i] = one.name || "";
-          if (!one.exists) {
-            analyses[i] = null;
-            i++;
-            next();
-            return;
-          }
-          exported++;
-          loadImage(one.path, function (err, img) {
-            if (err || !img) analyses[i] = null;
-            else {
-              try {
-                analyses[i] = analyzeImg(img);
-              } catch (eA) {
-                analyses[i] = null;
-              }
+          log("Kare " + (i + 1) + "/" + info.count + " f" + (fi + 1) + "/" + fracs.length);
+          evalScript("USTA_exportOne(" + i + "," + fracs[fi] + ")", function (res) {
+            var one;
+            try {
+              one = JSON.parse(String(res || "{}"));
+            } catch (e1) {
+              fi++;
+              nextFrac();
+              return;
             }
-            i++;
-            next();
+            if (i === 0 && fi === 0) {
+              log(
+                "probe method=" +
+                  (one.method || "-") +
+                  " exists=" +
+                  one.exists +
+                  " listed=" +
+                  (one.listed || "") +
+                  " err=" +
+                  (one.err || "")
+              );
+            }
+            if (i >= 2 && exported === 0 && !one.exists && fi === 0) {
+              busy = false;
+              log("Ilk kareler yazilmadi, durdu.\nerr=" + (one.err || res) + "\nlisted=" + (one.listed || ""));
+              return;
+            }
+            names[i] = one.name || names[i] || "";
+            if (one.dur && one.dur < 1.4) fracs = [fracs[0]];
+            if (!one.exists) {
+              fi++;
+              nextFrac();
+              return;
+            }
+            exported++;
+            loadImage(one.path, function (err, img) {
+              if (!err && img) {
+                try {
+                  samples.push(analyzeImg(img));
+                } catch (eA) {}
+              }
+              fi++;
+              nextFrac();
+            });
           });
-        });
+        }
+        nextFrac();
       }
       next();
     });

@@ -253,28 +253,16 @@
     t.exposure = clamp(log2(0.36 / Math.max(0.05, after)), -1.0, 0.8);
     t.highlightComp = look.highlightComp + clamp(a.clippedPct / 50, 0, 0.12);
     t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.008 : 0);
-    t.lookContrast = look.contrast * (span > 0.82 ? 0.97 : span < 0.52 ? 1.05 : 1);
-    t.saturation = look.sat;
-    if (a.meanSat > 0.42) t.saturation *= 0.93;
-    else if (a.meanSat < 0.17) t.saturation *= 1.04;
-    t.vibrance = look.vibrance + (a.skinPct > 5 ? 0.02 : 0) - (a.meanSat > 0.4 ? 0.02 : 0);
-    t.warm = look.warm;
-    t.fadedFilm = clamp(
-      look.fadedFilm + (span - 0.68) * 28 - (0.32 - a.meanSat) * 18,
-      Math.max(0, look.fadedFilm * 0.3),
-      look.fadedFilm * 1.7
-    );
-    var naturalVig = (a.centerLuma || a.meanLuma) - (a.cornerLuma || a.meanLuma);
-    t.vignette = look.vignette;
-    if (naturalVig > 0.08) t.vignette *= 0.35;
-    if (a.meanLuma < 0.22) t.vignette *= 0.4;
-    if (a.skinPct > 5) t.vignette *= 1.2;
-    t.vignette = clamp(t.vignette, -14, -2);
-    t.shadowLuma = look.shadowLuma;
-    if (a.crushedPct > 1.2) t.shadowLuma = Math.min(2, t.shadowLuma + 5);
-    if (a.blackPoint > 0.08) t.shadowLuma -= 4;
-    t.shadowLuma = clamp(t.shadowLuma, -12, 4);
-    t.highlightLuma = clamp(look.highlightLuma - a.clippedPct * 1.4, -28, 0);
+    t.lookContrast = 1 + (look.contrast - 1) * 0.4 * (span > 0.82 ? 0.5 : span < 0.52 ? 1.35 : 1);
+    t.saturation = 1 + (look.sat - 1) * 0.35;
+    if (a.meanSat > 0.42) t.saturation *= 0.97;
+    else if (a.meanSat < 0.17) t.saturation *= 1.02;
+    t.vibrance = 0;
+    t.warm = look.warm * 0.35;
+    t.fadedFilm = 0;
+    t.vignette = 0;
+    t.shadowLuma = 0;
+    t.highlightLuma = 0;
     if (hero && matchStrength > 0.01) {
       var selfMean = estimateMean(a, t);
       var heroWb = wbGains(hero);
@@ -308,52 +296,112 @@
     return toLumetri(a, t);
   }
 
-  function unifyLook(list, heroIndex) {
-    var hero = list[heroIndex] || list[0];
-    var i, g, out = [];
-    for (i = 0; i < list.length; i++) {
-      g = list[i];
-      out.push({
-        temperature: clamp(hero.temperature * 0.7 + g.temperature * 0.3, hero.temperature - 6, hero.temperature + 6),
-        tint: clamp(hero.tint * 0.7 + g.tint * 0.3, hero.tint - 3, hero.tint + 3),
-        exposure: clamp(hero.exposure * 0.65 + g.exposure * 0.35, hero.exposure - 0.2, hero.exposure + 0.2),
-        contrast: g.contrast,
-        highlights: g.highlights,
-        shadows: g.shadows,
-        whites: g.whites,
-        blacks: g.blacks,
-        saturation: g.saturation,
-        vibrance: g.vibrance,
-        fadedFilm: g.fadedFilm,
-        vignette: g.vignette,
-        shadowLuma: g.shadowLuma,
-        highlightLuma: g.highlightLuma
-      });
+  function medianNum(arr) {
+    var a = arr.slice().sort(function (x, y) {
+      return x - y;
+    });
+    return a[(a.length / 2) | 0];
+  }
+
+  function medianAnalyses(list) {
+    var clean = [];
+    var i, k, keys, out, pick, vals;
+    for (i = 0; i < list.length; i++) if (list[i]) clean.push(list[i]);
+    if (!clean.length) return null;
+    if (clean.length === 1) return clean[0];
+    keys = [
+      "blackPoint",
+      "whitePoint",
+      "meanLuma",
+      "meanR",
+      "meanG",
+      "meanB",
+      "meanSat",
+      "crushedPct",
+      "clippedPct",
+      "skinPct",
+      "tempHint",
+      "centerLuma",
+      "cornerLuma"
+    ];
+    out = {};
+    for (k = 0; k < keys.length; k++) {
+      vals = [];
+      for (i = 0; i < clean.length; i++) vals.push(clean[i][keys[k]] || 0);
+      out[keys[k]] = medianNum(vals);
     }
+    pick = clean[0];
+    for (i = 1; i < clean.length; i++) if ((clean[i].skinPct || 0) > (pick.skinPct || 0)) pick = clean[i];
+    out.skinMeanR = pick.skinMeanR;
+    out.skinMeanG = pick.skinMeanG;
+    out.skinMeanB = pick.skinMeanB;
     return out;
+  }
+
+  function clusterScenes(analyses) {
+    var scenes = [];
+    var cur = [0];
+    var i, dL, dT;
+    for (i = 1; i < analyses.length; i++) {
+      dL = Math.abs((analyses[i].meanLuma || 0) - (analyses[i - 1].meanLuma || 0));
+      dT = Math.abs((analyses[i].tempHint || 0) - (analyses[i - 1].tempHint || 0));
+      if (dL > 0.13 || dT > 20) {
+        scenes.push(cur);
+        cur = [i];
+      } else cur.push(i);
+    }
+    scenes.push(cur);
+    return scenes;
+  }
+
+  function makePrint(look) {
+    return {
+      temperature: round1(look.warm * 140),
+      tint: 0,
+      exposure: -0.05,
+      contrast: round1((look.contrast - 1) * 85),
+      highlights: round1(-look.highlightComp * 180),
+      shadows: 3,
+      whites: -6,
+      blacks: -2,
+      saturation: round1((look.sat - 1) * 100),
+      vibrance: round1(look.vibrance * 80),
+      fadedFilm: look.fadedFilm,
+      vignette: look.vignette,
+      shadowLuma: look.shadowLuma,
+      highlightLuma: look.highlightLuma
+    };
   }
 
   function gradeAll(analyses, lookId, matchStrength) {
     var look = LOOKS[lookId] || LOOKS.belgesel;
-    var i, best = -1e9, hero = analyses[0], s, heroIndex = 0;
-    if (matchStrength == null) matchStrength = 0.9;
-    for (i = 0; i < analyses.length; i++) {
-      s = heroScore(analyses[i]);
-      if (s > best) {
-        best = s;
-        hero = analyses[i];
-        heroIndex = i;
+    var scenes = clusterScenes(analyses);
+    var out = [];
+    var s, members, hero, j, idx, best, sc, heroIndex = 0;
+    if (matchStrength == null) matchStrength = 0.88;
+    for (s = 0; s < scenes.length; s++) {
+      members = scenes[s];
+      best = -1e9;
+      hero = analyses[members[0]];
+      for (j = 0; j < members.length; j++) {
+        sc = heroScore(analyses[members[j]]);
+        if (sc > best) {
+          best = sc;
+          hero = analyses[members[j]];
+          if (s === 0) heroIndex = members[j];
+        }
+      }
+      for (j = 0; j < members.length; j++) {
+        idx = members[j];
+        out[idx] = buildClip(analyses[idx], look, hero, matchStrength);
       }
     }
-    var out = [];
-    for (i = 0; i < analyses.length; i++) {
-      out.push(buildClip(analyses[i], look, hero, matchStrength));
-    }
-    return { lumetri: unifyLook(out, heroIndex), heroIndex: heroIndex };
+    return { lumetri: out, print: makePrint(look), scenes: scenes.length, heroIndex: heroIndex };
   }
 
   root.USTAEngine = {
     analyzeImageData: analyzeImageData,
+    medianAnalyses: medianAnalyses,
     gradeAll: gradeAll,
     LOOKS: LOOKS
   };
