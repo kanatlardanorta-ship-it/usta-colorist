@@ -220,8 +220,16 @@
               g.contrast +
               " B" +
               g.blacks +
+              " H" +
+              g.highlights +
               " Sat" +
-              (100 + g.saturation)
+              (100 + g.saturation) +
+              " Vg" +
+              g.vignette +
+              " FF" +
+              Math.round(g.fadedFilm) +
+              " HL" +
+              g.highlightLuma
           );
         }
         log(lines.join("\n") + "\nLumetri yaziliyor...");

@@ -83,8 +83,9 @@
     var meanR = 0, meanG = 0, meanB = 0, meanLuma = 0, meanSat = 0;
     var crushed = 0, clipped = 0, skinN = 0, skinR = 0, skinG = 0, skinB = 0;
     var wbR = 0, wbG = 0, wbB = 0, wbN = 0;
+    var centerLuma = 0, centerN = 0, cornerLuma = 0, cornerN = 0;
     var n = width * height;
-    var r8, g8, b8, r, g, b, y, max, min;
+    var r8, g8, b8, r, g, b, y, max, min, pix, x, yx, dx, dy, d2;
     for (i = 0; i < px.length; i += 4) {
       r8 = px[i];
       g8 = px[i + 1];
@@ -115,6 +116,19 @@
         wbG += g;
         wbB += b;
       }
+      pix = (i / 4) | 0;
+      x = pix % width;
+      yx = (pix / width) | 0;
+      dx = x / width - 0.5;
+      dy = yx / height - 0.5;
+      d2 = dx * dx + dy * dy;
+      if (d2 < 0.045) {
+        centerLuma += y;
+        centerN++;
+      } else if (d2 > 0.32) {
+        cornerLuma += y;
+        cornerN++;
+      }
     }
     var inv = 1 / Math.max(1, n);
     meanR *= inv;
@@ -139,6 +153,8 @@
       skinMeanR: skinN ? skinR / skinN : 0,
       skinMeanG: skinN ? skinG / skinN : 0,
       skinMeanB: skinN ? skinB / skinN : 0,
+      centerLuma: centerN ? centerLuma / centerN : meanLuma,
+      cornerLuma: cornerN ? cornerLuma / cornerN : meanLuma,
       tempHint: clamp(((wr - wb) / Math.max(0.04, wg)) * 55, -80, 80)
     };
   }
@@ -197,10 +213,10 @@
       blacks: round1(clamp((0.04 - t.blackIn) * 220, -40, 25)),
       saturation: round1(sat),
       vibrance: round1(t.vibrance * 80),
-      fadedFilm: t.fadedFilm,
-      vignette: t.vignette,
-      shadowLuma: t.shadowLuma,
-      highlightLuma: t.highlightLuma
+      fadedFilm: round1(t.fadedFilm),
+      vignette: round1(t.vignette),
+      shadowLuma: round1(t.shadowLuma),
+      highlightLuma: round1(t.highlightLuma)
     };
   }
 
@@ -229,6 +245,7 @@
     t.bGain = wb.bGain;
     t.blackIn = clamp(a.blackPoint - 0.004, 0, 0.25);
     t.whiteIn = clamp(a.whitePoint + 0.01, t.blackIn + 0.35, 1);
+    var span = a.whitePoint - a.blackPoint;
     var after =
       ((clamp(a.meanLuma, t.blackIn, t.whiteIn) - t.blackIn) / Math.max(0.08, t.whiteIn - t.blackIn)) *
         (t.whiteOut - t.blackOut) +
@@ -236,14 +253,28 @@
     t.exposure = clamp(log2(0.36 / Math.max(0.05, after)), -1.0, 0.8);
     t.highlightComp = look.highlightComp + clamp(a.clippedPct / 50, 0, 0.12);
     t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.008 : 0);
-    t.lookContrast = look.contrast;
+    t.lookContrast = look.contrast * (span > 0.82 ? 0.97 : span < 0.52 ? 1.05 : 1);
     t.saturation = look.sat;
-    t.vibrance = look.vibrance;
+    if (a.meanSat > 0.42) t.saturation *= 0.93;
+    else if (a.meanSat < 0.17) t.saturation *= 1.04;
+    t.vibrance = look.vibrance + (a.skinPct > 5 ? 0.02 : 0) - (a.meanSat > 0.4 ? 0.02 : 0);
     t.warm = look.warm;
-    t.fadedFilm = look.fadedFilm;
+    t.fadedFilm = clamp(
+      look.fadedFilm + (span - 0.68) * 28 - (0.32 - a.meanSat) * 18,
+      Math.max(0, look.fadedFilm * 0.3),
+      look.fadedFilm * 1.7
+    );
+    var naturalVig = (a.centerLuma || a.meanLuma) - (a.cornerLuma || a.meanLuma);
     t.vignette = look.vignette;
+    if (naturalVig > 0.08) t.vignette *= 0.35;
+    if (a.meanLuma < 0.22) t.vignette *= 0.4;
+    if (a.skinPct > 5) t.vignette *= 1.2;
+    t.vignette = clamp(t.vignette, -14, -2);
     t.shadowLuma = look.shadowLuma;
-    t.highlightLuma = look.highlightLuma;
+    if (a.crushedPct > 1.2) t.shadowLuma = Math.min(2, t.shadowLuma + 5);
+    if (a.blackPoint > 0.08) t.shadowLuma -= 4;
+    t.shadowLuma = clamp(t.shadowLuma, -12, 4);
+    t.highlightLuma = clamp(look.highlightLuma - a.clippedPct * 1.4, -28, 0);
     if (hero && matchStrength > 0.01) {
       var selfMean = estimateMean(a, t);
       var heroWb = wbGains(hero);
@@ -283,20 +314,20 @@
     for (i = 0; i < list.length; i++) {
       g = list[i];
       out.push({
-        temperature: clamp(hero.temperature * 0.78 + g.temperature * 0.22, hero.temperature - 6, hero.temperature + 6),
-        tint: clamp(hero.tint * 0.78 + g.tint * 0.22, hero.tint - 3, hero.tint + 3),
-        exposure: clamp(hero.exposure * 0.72 + g.exposure * 0.28, hero.exposure - 0.18, hero.exposure + 0.18),
-        contrast: hero.contrast,
+        temperature: clamp(hero.temperature * 0.7 + g.temperature * 0.3, hero.temperature - 6, hero.temperature + 6),
+        tint: clamp(hero.tint * 0.7 + g.tint * 0.3, hero.tint - 3, hero.tint + 3),
+        exposure: clamp(hero.exposure * 0.65 + g.exposure * 0.35, hero.exposure - 0.2, hero.exposure + 0.2),
+        contrast: g.contrast,
         highlights: g.highlights,
         shadows: g.shadows,
         whites: g.whites,
         blacks: g.blacks,
-        saturation: hero.saturation,
-        vibrance: hero.vibrance,
-        fadedFilm: hero.fadedFilm,
-        vignette: hero.vignette,
-        shadowLuma: hero.shadowLuma,
-        highlightLuma: hero.highlightLuma
+        saturation: g.saturation,
+        vibrance: g.vibrance,
+        fadedFilm: g.fadedFilm,
+        vignette: g.vignette,
+        shadowLuma: g.shadowLuma,
+        highlightLuma: g.highlightLuma
       });
     }
     return out;
