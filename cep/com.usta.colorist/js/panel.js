@@ -137,45 +137,62 @@
       return;
     }
     busy = true;
-    log("Kareler aktariliyor (V1 orta kare, LUT'lu program)...");
-    evalScript("USTA_exportSilent()", function (r) {
+    log("Hazirlik...");
+    evalScript("USTA_beginExport()", function (r) {
       var info;
       try {
         info = JSON.parse(String(r || "{}"));
       } catch (eP) {
         busy = false;
-        log("Export JSON hatasi: " + r);
+        log("begin JSON hatasi: " + r);
         return;
       }
-      if (!info.ok) {
+      if (!info.ok || !info.count) {
         busy = false;
-        log("Export basarisiz: " + (info.err || r));
+        log("V1 bos veya sekans yok. " + (info.err || r));
         return;
       }
-      if (!info.exported) {
-        busy = false;
-        log("PNG yazilamadi. File > Scripts ile kare aktar, ya da Premiere surumunu kontrol et.");
-        return;
-      }
-      log(info.exported + "/" + info.count + " kare. Analiz basliyor...");
-      analyzeFolder(info.folder, info.count, info.names || [], function (err, analyses) {
+      var i = 0;
+      var analyses = [];
+      var names = [];
+      var exported = 0;
+      function finish() {
         var okN = 0;
         var k;
         for (k = 0; k < analyses.length; k++) if (analyses[k]) okN++;
         if (!fillMissing(analyses)) {
           busy = false;
-          log("Hic kare okunamadi. Klasor: " + info.folder);
+          log(
+            "Hic PNG okunamadi (" +
+              exported +
+              "/" +
+              info.count +
+              "). Premiere kare vermedi.\nTemp: " +
+              info.folder
+          );
           return;
         }
         var look = document.getElementById("look").value || "belgesel";
         var graded = window.USTAEngine.gradeAll(analyses, look, 0.9);
         var lines = [];
-        lines.push("Analiz " + okN + "/" + info.count + "  look " + look + "  hero #" + (graded.heroIndex + 1));
+        lines.push(
+          "Analiz " +
+            okN +
+            "/" +
+            info.count +
+            " PNG " +
+            exported +
+            "  look " +
+            look +
+            "  hero #" +
+            (graded.heroIndex + 1)
+        );
         for (k = 0; k < graded.lumetri.length; k++) {
           var g = graded.lumetri[k];
-          var nm = (info.names && info.names[k]) || "#" + (k + 1);
+          var nm = names[k] || "#" + (k + 1);
           lines.push(
-            (k + 1) +
+            k +
+              1 +
               " " +
               nm +
               "  T" +
@@ -195,7 +212,47 @@
           busy = false;
           log(lines.join("\n") + "\n" + (res && res !== "undefined" ? res : "yazildi"));
         });
-      });
+      }
+      function next() {
+        if (i >= info.count) {
+          finish();
+          return;
+        }
+        log("Kare " + (i + 1) + "/" + info.count + " aktar + analiz...");
+        evalScript("USTA_exportOne(" + i + ")", function (res) {
+          var one;
+          try {
+            one = JSON.parse(String(res || "{}"));
+          } catch (e1) {
+            names[i] = "";
+            analyses[i] = null;
+            i++;
+            next();
+            return;
+          }
+          names[i] = one.name || "";
+          if (!one.exists) {
+            analyses[i] = null;
+            i++;
+            next();
+            return;
+          }
+          exported++;
+          loadImage(one.path, function (err, img) {
+            if (err || !img) analyses[i] = null;
+            else {
+              try {
+                analyses[i] = analyzeImg(img);
+              } catch (eA) {
+                analyses[i] = null;
+              }
+            }
+            i++;
+            next();
+          });
+        });
+      }
+      next();
     });
   }
 
@@ -273,9 +330,9 @@
     runAnalyzeGrade();
   };
   document.getElementById("frames").onclick = function () {
-    log("Kare aktarimi...");
-    evalScript("USTA_exportFrames()", function (r) {
-      log(r && r !== "undefined" ? String(r) : "Tamam.");
+    log("Temp kare klasoru aciliyor...");
+    evalScript("USTA_openTemp()", function (r) {
+      log("Klasor: " + r + "\nKare aktarimi Analiz butonunda kare kare olur. Bu buton sadece klasoru acar.");
     });
   };
 

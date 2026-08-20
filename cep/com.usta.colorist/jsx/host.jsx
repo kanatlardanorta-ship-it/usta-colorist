@@ -237,16 +237,6 @@ function USTA_run(grades) {
   return "OK " + applied + " Lumetri / " + paramOk + " param / " + bcOk + " legalizer";
 }
 
-function USTA_grade() {
-  var g;
-  try {
-    g = { t: 4, i: -2, e: 0.12, c: 16, h: -14, s: 8, w: 6, b: -11, sat: 7, v: 8 };
-    return USTA_run([g]);
-  } catch (e) {
-    return "ERR grade: " + e;
-  }
-}
-
 function USTA_applyJson(raw) {
   var data, list, i, c, L, g, clips;
   try {
@@ -287,8 +277,8 @@ function USTA_pad(n) {
   return s.substring(s.length - 4);
 }
 
-function USTA_exportSilent() {
-  var seq, track, folder, i, clip, t, out, ok, names, ticks, qeSeq;
+function USTA_beginExport() {
+  var seq, track, folder, i, old;
   try {
     if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
     seq = app.project.activeSequence;
@@ -296,7 +286,7 @@ function USTA_exportSilent() {
     folder = new Folder(Folder.temp.fsName + "/USTA_frames");
     if (!folder.exists) folder.create();
     try {
-      var old = folder.getFiles("usta_*.png");
+      old = folder.getFiles("usta_*.png");
       for (i = 0; i < old.length; i++) {
         try {
           old[i].remove();
@@ -306,87 +296,73 @@ function USTA_exportSilent() {
     try {
       app.enableQE();
     } catch (eQ) {}
-    try {
-      qeSeq = qe.project.getActiveSequence();
-    } catch (eQs) {
-      qeSeq = null;
-    }
-    ok = 0;
-    names = [];
-    for (i = 0; i < track.clips.numItems; i++) {
-      clip = track.clips[i];
-      t = clip.start.seconds + clip.duration.seconds * 0.35;
-      ticks = Math.round(t * 254016000000).toString();
-      try {
-        seq.setPlayerPosition(ticks);
-      } catch (ePos) {}
-      try {
-        $.sleep(60);
-      } catch (eSl) {}
-      out = new File(folder.fsName + "/usta_" + USTA_pad(i + 1) + ".png");
-      try {
-        if (seq.exportFramePNG) {
-          seq.exportFramePNG(seq.getPlayerPosition(), out.fsName);
-        } else if (qeSeq && qeSeq.player) {
-          qeSeq.player.exportFrame(out.fsName, 1);
-        }
-        if (out.exists) {
-          ok++;
-          names.push('"' + USTA_esc(clip.name) + '"');
-        } else {
-          names.push('""');
-        }
-      } catch (eExp) {
-        names.push('""');
-      }
-    }
     return (
       '{"ok":1,"folder":"' +
       USTA_esc(folder.fsName.replace(/\\/g, "/")) +
       '","count":' +
       track.clips.numItems +
-      ',"exported":' +
-      ok +
-      ',"names":[' +
-      names.join(",") +
-      "]}"
+      "}"
     );
   } catch (e) {
     return '{"ok":0,"err":"' + USTA_esc(e) + '"}';
   }
 }
 
-function USTA_exportFrames() {
-  var seq, track, folder, i, clip, t, out, ok;
+function USTA_exportOne(index) {
+  var seq, track, clip, t, ticks, out, folder, qeSeq, name;
   try {
-    if (!app.project || !app.project.activeSequence) return "ERR: sekans yok";
+    index = parseInt(index, 10);
+    if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
     seq = app.project.activeSequence;
     track = seq.videoTracks[0];
-    folder = Folder.selectDialog("USTA kare klasoru");
-    if (!folder) return "iptal";
-    ok = 0;
+    if (index < 0 || index >= track.clips.numItems) return '{"ok":0,"err":"index"}';
+    clip = track.clips[index];
+    name = clip.name;
+    t = clip.start.seconds + clip.duration.seconds * 0.35;
+    ticks = Math.round(t * 254016000000).toString();
     try {
-      app.enableQE();
-    } catch (eQ) {}
-    for (i = 0; i < track.clips.numItems; i++) {
-      clip = track.clips[i];
-      t = clip.start.seconds + clip.duration.seconds * 0.35;
-      try {
-        seq.setPlayerPosition(Math.round(t * 254016000000).toString());
-      } catch (ePos) {}
-      out = new File(folder.fsName + "/usta_" + ("00" + (i + 1)).slice(-3) + ".png");
-      try {
-        if (seq.exportFramePNG) {
-          seq.exportFramePNG(seq.getPlayerPosition(), out.fsName);
-          ok++;
-        } else {
-          qe.project.getActiveSequence().player.exportFrame(out.fsName, 1);
-          ok++;
-        }
-      } catch (eExp) {}
-    }
-    return "OK " + ok + " kare -> " + folder.fsName;
+      seq.setPlayerPosition(ticks);
+    } catch (ePos) {}
+    try {
+      $.sleep(80);
+    } catch (eSl) {}
+    folder = new Folder(Folder.temp.fsName + "/USTA_frames");
+    if (!folder.exists) folder.create();
+    out = new File(folder.fsName + "/usta_" + USTA_pad(index + 1) + ".png");
+    try {
+      if (out.exists) out.remove();
+    } catch (eDel) {}
+    try {
+      if (seq.exportFramePNG) {
+        seq.exportFramePNG(seq.getPlayerPosition(), out.fsName);
+      } else {
+        qeSeq = qe.project.getActiveSequence();
+        if (qeSeq && qeSeq.player) qeSeq.player.exportFrame(out.fsName, 1);
+      }
+    } catch (eExp) {}
+    return (
+      '{"ok":1,"i":' +
+      index +
+      ',"name":"' +
+      USTA_esc(name) +
+      '","path":"' +
+      USTA_esc(out.fsName.replace(/\\/g, "/")) +
+      '","exists":' +
+      (out.exists ? 1 : 0) +
+      "}"
+    );
   } catch (e) {
-    return "ERR export: " + e;
+    return '{"ok":0,"err":"' + USTA_esc(e) + '"}';
+  }
+}
+
+function USTA_openTemp() {
+  try {
+    var folder = new Folder(Folder.temp.fsName + "/USTA_frames");
+    if (!folder.exists) folder.create();
+    folder.execute();
+    return folder.fsName;
+  } catch (e) {
+    return "ERR " + e;
   }
 }
