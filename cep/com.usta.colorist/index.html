@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>USTA</title>
+    <link rel="stylesheet" href="css/panel.css" />
+  </head>
+  <body>
+    <header>
+      <div class="mark">U</div>
+      <div>
+        <strong>USTA</strong>
+        <span>S-Log → TRT-2</span>
+      </div>
+    </header>
+    <p class="lead">
+      Aktif sekans V1. LUT durur. Lumetri + Broadcast Colors eklenir. Tek undo grubu.
+    </p>
+    <button id="grade" type="button">V1’i TRT-2 Grade Et</button>
+    <button id="frames" type="button" class="ghost">Kareleri PNG aktar</button>
+    <label class="json">
+      Tezgâh JSON (opsiyonel)
+      <textarea id="json" rows="6" placeholder='{"clips":[{"lumetri":{...}}]}'></textarea>
+    </label>
+    <button id="fromjson" type="button" class="ghost">JSON ile uygula</button>
+    <pre id="log"></pre>
+    <script src="js/panel.js"></script>
+  </body>
+</html>
