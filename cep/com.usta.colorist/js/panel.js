@@ -263,6 +263,16 @@
                 one.exists +
                 " nfiles=" +
                 one.nfiles +
+                " tc=" +
+                (one.tc || "") +
+                " cti=" +
+                (one.cti || "") +
+                " fps=" +
+                one.fps +
+                " listed=" +
+                (one.listed || "") +
+                " methods=" +
+                (one.methods || "") +
                 " err=" +
                 (one.err || "")
             );
