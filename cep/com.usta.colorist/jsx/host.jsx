@@ -327,66 +327,77 @@ function USTA_methods(obj) {
   return s.join("|");
 }
 
-function USTA_fileOk(path) {
-  var f;
-  try {
-    f = new File(path);
-    return f.exists && f.length > 200;
-  } catch (e) {
-    return false;
-  }
+
+function USTA_sep() {
+  return Folder.fs === "Macintosh" ? "/" : "\\";
 }
 
-function USTA_callExport(qeSeq, a, b) {
-  try {
-    qeSeq.exportFramePNG(a, b);
-    return true;
-  } catch (e) {
-    return false;
-  }
+function USTA_stem(folder, index) {
+  return folder.fsName + USTA_sep() + "usta_" + USTA_pad(index + 1);
 }
 
-function USTA_tryWritePng(seq, qeSeq, path, seconds) {
+function USTA_resolvePng(stem) {
+  var a, i, f;
+  a = [stem + ".png", stem + ".png.png", stem];
+  for (i = 0; i < a.length; i++) {
+    try {
+      f = new File(a[i]);
+      if (f.exists && f.length > 200) return f.fsName.replace(/\\/g, "/");
+    } catch (e) {}
+  }
+  return "";
+}
+
+function USTA_tryWritePng(seq, qeSeq, stem, seconds) {
   var err = "";
-  var fps, tc, ticks, cti, fobj;
+  var fps, tc, cti, found, hit;
   fps = USTA_fps(seq);
   tc = USTA_timecode(seconds, fps);
-  try {
-    ticks = seq.getPlayerPosition().ticks;
-  } catch (e0) {
-    ticks = "";
-    err += "pos;";
-  }
   cti = "";
   try {
     if (qeSeq && qeSeq.CTI) cti = "" + qeSeq.CTI.timecode;
   } catch (eC) {
-    err += "cti;";
-  }
-  fobj = new File(path);
-
-  function ok() {
-    try {
-      $.sleep(40);
-    } catch (eS) {}
-    return USTA_fileOk(path);
+    err += "cti:" + eC + ";";
   }
 
-  if (qeSeq) {
-    if (cti && USTA_callExport(qeSeq, cti, path) && ok()) return { m: "cti.str", err: err, tc: cti, fps: fps };
-    if (cti && USTA_callExport(qeSeq, cti, fobj) && ok()) return { m: "cti.file", err: err, tc: cti, fps: fps };
-    if (tc && USTA_callExport(qeSeq, tc, path) && ok()) return { m: "tc.str", err: err, tc: tc, fps: fps };
-    if (tc && USTA_callExport(qeSeq, tc, fobj) && ok()) return { m: "tc.file", err: err, tc: tc, fps: fps };
-    if (ticks && USTA_callExport(qeSeq, ticks, path) && ok()) return { m: "ticks.str", err: err, tc: tc, fps: fps };
-    if (ticks && USTA_callExport(qeSeq, "" + ticks, fobj) && ok()) return { m: "ticks.file", err: err, tc: tc, fps: fps };
+  function after(tag) {
+    found = USTA_resolvePng(stem);
+    if (found) return { m: tag, err: err, tc: tc, fps: fps, cti: cti, path: found };
+    return null;
+  }
+
+  function call(tag, a, b) {
     try {
-      qeSeq.exportFramePNG(tc);
-      if (ok()) return { m: "tc.only", err: err, tc: tc, fps: fps };
-    } catch (e1) {
-      err += "tc.only:" + e1 + ";";
+      qeSeq.exportFramePNG(a, b);
+      return after(tag);
+    } catch (e) {
+      err += tag + ":" + e + ";";
+      return null;
     }
-  } else {
+  }
+
+  if (!qeSeq) {
     err += "noQE;";
+    return { m: "", err: err, tc: tc, fps: fps, cti: cti, path: "", methods: "noqe" };
+  }
+
+  if (cti) {
+    hit = call("cti.noext", cti, stem);
+    if (hit) return hit;
+    hit = call("cti.png", cti, stem + ".png");
+    if (hit) return hit;
+  }
+  if (tc) {
+    hit = call("tc.noext", tc, stem);
+    if (hit) return hit;
+    hit = call("tc.png", tc, stem + ".png");
+    if (hit) return hit;
+  }
+  try {
+    hit = call("ticks.noext", seq.getPlayerPosition().ticks, stem);
+    if (hit) return hit;
+  } catch (eT) {
+    err += "ticks:" + eT + ";";
   }
 
   return {
@@ -395,7 +406,8 @@ function USTA_tryWritePng(seq, qeSeq, path, seconds) {
     tc: tc,
     fps: fps,
     cti: cti,
-    methods: qeSeq ? USTA_methods(qeSeq) : "noqe"
+    path: "",
+    methods: USTA_methods(qeSeq)
   };
 }
 
@@ -405,33 +417,23 @@ function USTA_beginExport() {
     if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
     seq = app.project.activeSequence;
     track = seq.videoTracks[0];
-    folder = new Folder(Folder.desktop.fsName + "/USTA_frames");
+    folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
     if (!folder.exists) folder.create();
     try {
-      old = folder.getFiles("*.png");
+      old = folder.getFiles("usta_*");
       for (i = 0; i < old.length; i++) {
-        try {
-          old[i].remove();
-        } catch (eRm) {}
+        try { old[i].remove(); } catch (eRm) {}
       }
     } catch (eOld) {}
-    try {
-      app.enableQE();
-    } catch (eQ) {}
-    return (
-      '{"ok":1,"folder":"' +
-      USTA_esc(folder.fsName.replace(/\\/g, "/")) +
-      '","count":' +
-      track.clips.numItems +
-      "}"
-    );
+    try { app.enableQE(); } catch (eQ) {}
+    return '{"ok":1,"folder":"' + USTA_esc(folder.fsName.replace(/\\/g, "/")) + '","count":' + track.clips.numItems + "}";
   } catch (e) {
     return '{"ok":0,"err":"' + USTA_esc(e) + '"}';
   }
 }
 
 function USTA_exportOne(index) {
-  var seq, track, clip, t, ticks, out, folder, qeSeq, name, wrote, nfiles, listed;
+  var seq, track, clip, t, ticks, folder, qeSeq, name, wrote, nfiles, listed, stem;
   try {
     index = parseInt(index, 10);
     if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
@@ -442,60 +444,32 @@ function USTA_exportOne(index) {
     name = clip.name;
     t = clip.start.seconds + clip.duration.seconds * 0.35;
     ticks = Math.round(t * 254016000000).toString();
-    try {
-      seq.setPlayerPosition(ticks);
-    } catch (ePos) {}
-    try {
-      app.enableQE();
-    } catch (eQ) {}
-    try {
-      qeSeq = qe.project.getActiveSequence();
-    } catch (eQs) {
-      qeSeq = null;
-    }
-    try {
-      $.sleep(200);
-    } catch (eSl) {}
-    folder = new Folder(Folder.desktop.fsName + "/USTA_frames");
+    try { seq.setPlayerPosition(ticks); } catch (ePos) {}
+    try { app.enableQE(); } catch (eQ) {}
+    try { qeSeq = qe.project.getActiveSequence(); } catch (eQs) { qeSeq = null; }
+    try { $.sleep(180); } catch (eSl) {}
+    folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
     if (!folder.exists) folder.create();
-    out = new File(folder.fsName + "/usta_" + USTA_pad(index + 1) + ".png");
-    try {
-      if (out.exists) out.remove();
-    } catch (eDel) {}
-    wrote = USTA_tryWritePng(seq, qeSeq, out.fsName, t);
+    stem = USTA_stem(folder, index);
+    wrote = USTA_tryWritePng(seq, qeSeq, stem, t);
     nfiles = 0;
     listed = "";
     try {
       nfiles = folder.getFiles("*").length;
-      if (nfiles && folder.getFiles("*")[0]) listed = folder.getFiles("*")[0].name;
+      if (nfiles) listed = folder.getFiles("*")[0].name;
     } catch (eN) {}
-    return (
-      '{"ok":1,"i":' +
-      index +
-      ',"name":"' +
-      USTA_esc(name) +
-      '","path":"' +
-      USTA_esc(out.fsName.replace(/\\/g, "/")) +
-      '","exists":' +
-      (USTA_fileOk(out.fsName) ? 1 : 0) +
-      ',"method":"' +
-      USTA_esc(wrote.m) +
-      '","err":"' +
-      USTA_esc(wrote.err) +
-      '","tc":"' +
-      USTA_esc(wrote.tc) +
-      '","cti":"' +
-      USTA_esc(wrote.cti) +
-      '","fps":' +
-      (wrote.fps || 0) +
-      ',"nfiles":' +
-      nfiles +
-      ',"listed":"' +
-      USTA_esc(listed) +
-      '","methods":"' +
-      USTA_esc(wrote.methods) +
-      '"}'
-    );
+    return '{"ok":1,"i":' + index +
+      ',"name":"' + USTA_esc(name) +
+      '","path":"' + USTA_esc(wrote.path || "") +
+      '","exists":' + (wrote.path ? 1 : 0) +
+      ',"method":"' + USTA_esc(wrote.m) +
+      '","err":"' + USTA_esc(wrote.err) +
+      '","tc":"' + USTA_esc(wrote.tc) +
+      '","cti":"' + USTA_esc(wrote.cti) +
+      '","fps":' + (wrote.fps || 0) +
+      ',"nfiles":' + nfiles +
+      ',"listed":"' + USTA_esc(listed) +
+      '","methods":"' + USTA_esc(wrote.methods) + '"}';
   } catch (e) {
     return '{"ok":0,"err":"' + USTA_esc(e) + '"}';
   }
@@ -503,7 +477,7 @@ function USTA_exportOne(index) {
 
 function USTA_openTemp() {
   try {
-    var folder = new Folder(Folder.desktop.fsName + "/USTA_frames");
+    var folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
     if (!folder.exists) folder.create();
     folder.execute();
     return folder.fsName;

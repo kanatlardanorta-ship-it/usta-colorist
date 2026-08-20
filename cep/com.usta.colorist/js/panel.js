@@ -283,11 +283,27 @@
               "Ilk 3 kare yazilmadi, durdu.\n" +
                 "method=" +
                 (one.method || "-") +
+                " exists=" +
+                one.exists +
+                " nfiles=" +
+                one.nfiles +
+                " listed=" +
+                (one.listed || "") +
+                "\ntc=" +
+                (one.tc || "") +
+                " cti=" +
+                (one.cti || "") +
+                " fps=" +
+                one.fps +
+                "\npath=" +
+                (one.path || "") +
+                "\nmethods=" +
+                (one.methods || "") +
                 "\nerr=" +
                 (one.err || res) +
-                "\nTemp: " +
+                "\nKlasor: " +
                 info.folder +
-                "\nBu metni gonder."
+                "\nMasaustu\\USTA_frames icine bak: .png.png olabilir."
             );
             return;
           }
