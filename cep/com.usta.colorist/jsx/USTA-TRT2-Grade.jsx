@@ -66,7 +66,7 @@ function USTA_hitName(display, names) {
   a = ("" + display).toLowerCase();
   for (i = 0; i < names.length; i++) {
     b = ("" + names[i]).toLowerCase();
-    if (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return true;
+    if (a === b) return true;
   }
   return false;
 }
@@ -148,7 +148,7 @@ function USTA_applyToComponent(comp, g) {
   if (USTA_setParam(comp, ["Shadows", "Golgeler", "Gölgeler"], g.s)) n++;
   if (USTA_setParam(comp, ["Whites", "Beyazlar"], g.w)) n++;
   if (USTA_setParam(comp, ["Blacks", "Siyahlar"], g.b)) n++;
-  if (USTA_setParam(comp, ["Saturation", "Doygunluk"], g.sat)) n++;
+  if (USTA_setParam(comp, ["Saturation", "Doygunluk"], 100 + g.sat)) n++;
   if (USTA_setParam(comp, ["Vibrance", "Canlilik", "Canlılık"], g.v)) n++;
   return n;
 }
