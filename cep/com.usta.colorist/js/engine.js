@@ -200,8 +200,8 @@
     t.highlightComp = look.highlightComp + clamp(a.clippedPct / 80, 0, 0.08);
     t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.012 : 0);
     t.lookContrast = look.contrast;
-    t.saturation = look.sat * (a.meanSat < 0.18 ? 1.06 : a.meanSat > 0.45 ? 0.94 : 1);
-    t.vibrance = a.skinPct > 3 ? 0.08 : 0.04;
+    t.saturation = look.sat;
+    t.vibrance = 0.06;
     t.warm = look.warm;
     if (hero && matchStrength > 0.01) {
       var selfMean = estimateMean(a, t);
@@ -229,27 +229,51 @@
       var heroMean = estimateMean(hero, heroT);
       var m = matchStrength;
       t.exposure += log2(Math.max(0.08, heroMean) / Math.max(0.08, selfMean)) * m;
-      t.rGain = t.rGain * (1 - m * 0.65) + heroWb.rGain * (m * 0.65);
-      t.bGain = t.bGain * (1 - m * 0.65) + heroWb.bGain * (m * 0.65);
+      t.rGain = t.rGain * (1 - m) + heroWb.rGain * m;
+      t.gGain = t.gGain * (1 - m) + heroWb.gGain * m;
+      t.bGain = t.bGain * (1 - m) + heroWb.bGain * m;
     }
     return toLumetri(a, t);
   }
 
+  function unifyLook(list, heroIndex) {
+    var hero = list[heroIndex] || list[0];
+    var i, g, out = [];
+    for (i = 0; i < list.length; i++) {
+      g = list[i];
+      out.push({
+        temperature: clamp(hero.temperature * 0.78 + g.temperature * 0.22, hero.temperature - 6, hero.temperature + 6),
+        tint: clamp(hero.tint * 0.78 + g.tint * 0.22, hero.tint - 3, hero.tint + 3),
+        exposure: clamp(hero.exposure * 0.72 + g.exposure * 0.28, hero.exposure - 0.18, hero.exposure + 0.18),
+        contrast: hero.contrast,
+        highlights: g.highlights,
+        shadows: g.shadows,
+        whites: g.whites,
+        blacks: g.blacks,
+        saturation: hero.saturation,
+        vibrance: hero.vibrance
+      });
+    }
+    return out;
+  }
+
   function gradeAll(analyses, lookId, matchStrength) {
     var look = LOOKS[lookId] || LOOKS.belgesel;
-    var i, best = -1e9, hero = analyses[0], s;
+    var i, best = -1e9, hero = analyses[0], s, heroIndex = 0;
+    if (matchStrength == null) matchStrength = 0.9;
     for (i = 0; i < analyses.length; i++) {
       s = heroScore(analyses[i]);
       if (s > best) {
         best = s;
         hero = analyses[i];
+        heroIndex = i;
       }
     }
     var out = [];
     for (i = 0; i < analyses.length; i++) {
       out.push(buildClip(analyses[i], look, hero, matchStrength));
     }
-    return { lumetri: out, heroIndex: analyses.indexOf(hero) };
+    return { lumetri: unifyLook(out, heroIndex), heroIndex: heroIndex };
   }
 
   root.USTAEngine = {

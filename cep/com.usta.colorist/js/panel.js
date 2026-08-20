@@ -168,7 +168,7 @@
           return;
         }
         var look = document.getElementById("look").value || "belgesel";
-        var graded = window.USTAEngine.gradeAll(analyses, look, 0.78);
+        var graded = window.USTAEngine.gradeAll(analyses, look, 0.9);
         var lines = [];
         lines.push("Analiz " + okN + "/" + info.count + "  look " + look + "  hero #" + (graded.heroIndex + 1));
         for (k = 0; k < graded.lumetri.length; k++) {
