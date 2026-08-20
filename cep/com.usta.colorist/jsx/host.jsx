@@ -125,7 +125,7 @@ function USTA_setParam(comp, names, value) {
 
 function USTA_dumpProps(comp, prefix, acc, depth) {
   var i, p, n;
-  if (!comp || !comp.properties || depth > 4 || acc.length > 40) return;
+  if (!comp || !comp.properties || depth > 4 || acc.length > 80) return;
   try {
     for (i = 0; i < comp.properties.numItems; i++) {
       p = comp.properties[i];
@@ -136,6 +136,38 @@ function USTA_dumpProps(comp, prefix, acc, depth) {
       }
     }
   } catch (e) {}
+}
+
+function USTA_enableNamed(comp, needles) {
+  var i, p, name, n, ok;
+  ok = false;
+  if (!comp || !comp.properties) return false;
+  try {
+    for (i = 0; i < comp.properties.numItems; i++) {
+      p = comp.properties[i];
+      if (!p) continue;
+      name = ("" + p.displayName).toLowerCase();
+      for (n = 0; n < needles.length; n++) {
+        if (name.indexOf(needles[n]) >= 0) {
+          try {
+            p.setValue(true, 1);
+            ok = true;
+          } catch (e1) {}
+          try {
+            p.setValue(1, 1);
+            ok = true;
+          } catch (e2) {}
+          try {
+            if (p.properties && p.properties.numItems) {
+              p.properties[0].setValue(true, 1);
+              ok = true;
+            }
+          } catch (e3) {}
+        }
+      }
+    }
+  } catch (e0) {}
+  return ok;
 }
 
 function USTA_getGroup(props, needles, depth) {
@@ -186,6 +218,9 @@ function USTA_disableComp(comp) {
 
 function USTA_applyToComponent(comp, g) {
   var n = 0;
+  var vgOk = false;
+  var ffOk = false;
+  USTA_enableNamed(comp, ["creative", "yaratici", "yaratıcı", "vignette", "vinyet", "vin yet", "wheel", "teker", "curve", "egri", "eğri"]);
   if (USTA_setParam(comp, ["Temperature", "Sicaklik", "Sıcaklık"], g.t)) n++;
   if (USTA_setParam(comp, ["Tint", "Ton"], g.i)) n++;
   if (USTA_setParam(comp, ["Exposure", "Pozlama"], g.e)) n++;
@@ -201,12 +236,18 @@ function USTA_applyToComponent(comp, g) {
     if (USTA_setIn(comp, ["creative", "yaratici", "yaratıcı"], ["Vibrance", "Canlilik", "Canlılık"], g.v)) n++;
   }
   if (g.ff != null) {
-    if (USTA_setIn(comp, ["creative", "yaratici", "yaratıcı"], ["Faded Film", "Soluk Film", "Faded"], g.ff)) n++;
+    if (USTA_setIn(comp, ["creative", "yaratici", "yaratıcı"], ["Faded Film", "Soluk Film", "Faded"], g.ff)) {
+      n++;
+      ffOk = true;
+    }
   }
   if (g.vg != null) {
-    if (USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Amount", "Miktar"], g.vg)) n++;
-    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Midpoint", "Orta Nokta"], 50);
-    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Feather", "Yumusaklik", "Yumuşaklık"], 70);
+    if (USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Amount", "Miktar"], g.vg)) {
+      n++;
+      vgOk = true;
+    }
+    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Midpoint", "Orta Nokta", "Midpoint"], 50);
+    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Feather", "Yumusaklik", "Yumuşaklık"], 65);
   }
   if (g.sl != null) {
     USTA_setIn(comp, ["wheel", "teker", "wheels"], ["Shadow Luma", "Shadows Luma", "Golge"], g.sl);
@@ -217,7 +258,7 @@ function USTA_applyToComponent(comp, g) {
   if (g.curve) {
     USTA_setIn(comp, ["curve", "egri", "eğri", "curves"], ["Master", "RGB", "Luma"], g.curve);
   }
-  return n;
+  return { n: n, vg: vgOk ? 1 : 0, ff: ffOk ? 1 : 0 };
 }
 
 function USTA_addFxToQeClip(qeItem, names) {
@@ -278,8 +319,8 @@ function USTA_run(grades) {
       if (lum) {
         wrote = USTA_applyToComponent(lum, g);
         applied++;
-        paramOk += wrote;
-        if (wrote === 0 && dump.length === 0) {
+        paramOk += wrote.n || 0;
+        if ((!wrote.n) && dump.length === 0) {
           USTA_dumpProps(lum, "", dump, 0);
         }
       }
@@ -652,7 +693,7 @@ function USTA_lumetriCount(clip) {
 }
 
 function USTA_applyPrintJson(raw) {
-  var L, g, clip, lum, qeTrack, qeItem, wrote, i, seq, track, n;
+  var L, g, clip, lum, qeTrack, qeItem, wrote, i, seq, track, n, dump;
   try {
     L = eval("(" + raw + ")");
   } catch (e0) {
@@ -691,8 +732,18 @@ function USTA_applyPrintJson(raw) {
     }
     if (lum) {
       wrote = USTA_applyToComponent(lum, g);
+      dump = [];
+      if (!wrote.vg || !wrote.ff) USTA_dumpProps(lum, "", dump, 0);
       USTA_endUndo();
-      return "PRINT V2 USTA_PRINT / " + wrote + " param. Look buradan kis.";
+      return (
+        "PRINT V2 / " +
+        (wrote.n || 0) +
+        " param vg=" +
+        wrote.vg +
+        " ff=" +
+        wrote.ff +
+        (dump.length ? " | PROPS " + dump.join(" | ") : "")
+      );
     }
   }
   seq = app.project.activeSequence;
@@ -717,4 +768,46 @@ function USTA_applyPrintJson(raw) {
   }
   USTA_endUndo();
   return "PRINT fallback 2. Lumetri x" + n + " (V2 AL olusmadi)";
+}
+
+function USTA_applyOne(index, raw) {
+  var data, L, g, clip, lum, qeTrack, qeItem, wrote;
+  try {
+    index = parseInt(index, 10);
+    data = eval("(" + raw + ")");
+    L = data.lumetri || data;
+    if (!app.project || !app.project.activeSequence) return "ERR sekans";
+    clip = app.project.activeSequence.videoTracks[0].clips[index];
+    if (!clip) return "ERR clip";
+    g = {
+      t: L.temperature,
+      i: L.tint,
+      e: L.exposure,
+      c: L.contrast,
+      h: L.highlights,
+      s: L.shadows,
+      w: L.whites,
+      b: L.blacks,
+      sat: L.saturation,
+      v: 0,
+      ff: 0,
+      vg: 0,
+      sl: 0,
+      hl: 0
+    };
+    lum = USTA_findLumetri(clip);
+    if (!lum) {
+      try {
+        qeTrack = qe.project.getActiveSequence().getVideoTrackAt(0);
+        qeItem = qeTrack.getItemAt(index);
+        USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
+        lum = USTA_findLumetri(clip);
+      } catch (eA) {}
+    }
+    if (!lum) return "ERR lumetri";
+    wrote = USTA_applyToComponent(lum, g);
+    return "OK clip " + (index + 1) + " " + (wrote.n || 0) + "p";
+  } catch (e) {
+    return "ERR one " + e;
+  }
 }

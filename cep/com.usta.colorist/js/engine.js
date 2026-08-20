@@ -168,23 +168,22 @@
   }
 
   function wbGains(a) {
-    var rGain = a.meanG / Math.max(a.meanR, 0.02);
-    var gGain = 1;
-    var bGain = a.meanG / Math.max(a.meanB, 0.02);
-    if (a.skinPct > 2.2 && a.skinMeanG > 0.05) {
-      var curRG = a.skinMeanR / a.skinMeanG;
-      var curBG = a.skinMeanB / a.skinMeanG;
-      var skinR = 1.22 / Math.max(0.4, curRG);
-      var skinB = 0.78 / Math.max(0.4, curBG);
-      var w = clamp(a.skinPct / 10, 0.25, 0.7);
-      rGain = rGain * (1 - w) + skinR * w;
-      bGain = bGain * (1 - w) + skinB * w;
+    var rGain, gGain, bGain, curRG, curBG;
+    gGain = 1;
+    if (a.skinPct > 2.0 && a.skinMeanG > 0.04) {
+      curRG = a.skinMeanR / a.skinMeanG;
+      curBG = a.skinMeanB / a.skinMeanG;
+      rGain = 1.16 / Math.max(0.55, curRG);
+      bGain = 0.84 / Math.max(0.4, curBG);
+    } else {
+      rGain = a.meanG / Math.max(a.meanR, 0.02);
+      bGain = a.meanG / Math.max(a.meanB, 0.02);
     }
     var gmean = cbrt(Math.max(1e-6, rGain * gGain * bGain));
     rGain /= gmean;
     gGain /= gmean;
     bGain /= gmean;
-    var limit = 1.35;
+    var limit = a.skinPct > 2 ? 1.12 : 1.22;
     return {
       rGain: clamp(rGain, 1 / limit, limit),
       gGain: clamp(gGain, 1 / limit, limit),
@@ -201,22 +200,23 @@
   }
 
   function toLumetri(a, t) {
-    var sat = clamp((t.saturation - 1) * 100, -30, 40);
+    var sat = clamp((t.saturation - 1) * 100, -12, 8);
+    var tLim = a.skinPct > 2 ? 12 : 20;
     return {
-      temperature: round1(clamp(((t.rGain - t.bGain) / 0.28) * 50 + t.warm * 180, -80, 80)),
-      tint: round1(clamp(((t.gGain - 1) / 0.18) * -40, -50, 50)),
-      exposure: round2(t.exposure),
-      contrast: round1(clamp((t.lookContrast - 1) * 95, -20, 40)),
-      highlights: round1(clamp(-t.highlightComp * 280 - a.clippedPct * 1.1, -60, 15)),
-      shadows: round1(clamp(t.shadowLift * 420 + (a.crushedPct > 1 ? 6 : 0), -20, 40)),
-      whites: round1(clamp((t.whiteIn - 0.92) * -180 + (1 - t.whiteIn) * 40, -30, 40)),
-      blacks: round1(clamp((0.04 - t.blackIn) * 220, -40, 25)),
+      temperature: round1(clamp(((t.rGain - t.bGain) / 0.28) * 50 + t.warm * 180, -tLim, tLim)),
+      tint: round1(clamp(((t.gGain - 1) / 0.18) * -40, -8, 8)),
+      exposure: round2(clamp(t.exposure, -0.32, 0.28)),
+      contrast: round1(clamp((t.lookContrast - 1) * 95, -8, 14)),
+      highlights: round1(clamp(-t.highlightComp * 220 - a.clippedPct * 0.8, -32, 6)),
+      shadows: round1(clamp(t.shadowLift * 320 + (a.crushedPct > 1 ? 4 : 0), -10, 14)),
+      whites: round1(clamp((t.whiteIn - 0.95) * -100, -18, 8)),
+      blacks: round1(clamp((0.045 - t.blackIn) * 160, -16, 8)),
       saturation: round1(sat),
-      vibrance: round1(t.vibrance * 80),
-      fadedFilm: round1(t.fadedFilm),
-      vignette: round1(t.vignette),
-      shadowLuma: round1(t.shadowLuma),
-      highlightLuma: round1(t.highlightLuma)
+      vibrance: 0,
+      fadedFilm: 0,
+      vignette: 0,
+      shadowLuma: 0,
+      highlightLuma: 0
     };
   }
 
@@ -373,11 +373,106 @@
     };
   }
 
+  function lockScene(list, members) {
+    var i, idx, medT, medE, medW, temps, exps, whites;
+    if (members.length < 2) return;
+    temps = [];
+    exps = [];
+    whites = [];
+    for (i = 0; i < members.length; i++) {
+      temps.push(list[members[i]].temperature);
+      exps.push(list[members[i]].exposure);
+      whites.push(list[members[i]].whites);
+    }
+    medT = medianNum(temps);
+    medE = medianNum(exps);
+    medW = medianNum(whites);
+    for (i = 0; i < members.length; i++) {
+      idx = members[i];
+      list[idx].temperature = round1(clamp(list[idx].temperature * 0.3 + medT * 0.7, medT - 6, medT + 6));
+      list[idx].tint = round1(clamp(list[idx].tint, -6, 6));
+      list[idx].exposure = round2(clamp(list[idx].exposure * 0.4 + medE * 0.6, medE - 0.16, medE + 0.16));
+      list[idx].whites = round1(clamp(list[idx].whites, -16, 8));
+      list[idx].blacks = round1(clamp(list[idx].blacks, -14, 8));
+    }
+  }
+
+  function sceneOfFrom(scenes, n) {
+    var i, j, out = [];
+    for (i = 0; i < n; i++) out[i] = 0;
+    for (i = 0; i < scenes.length; i++) {
+      for (j = 0; j < scenes[i].length; j++) out[scenes[i][j]] = i;
+    }
+    return out;
+  }
+
+  function flagClips(lumetri, analyses, sceneOf) {
+    var i, L, a, flags, reasons, medT, j, temps;
+    flags = [];
+    for (i = 0; i < lumetri.length; i++) {
+      L = lumetri[i];
+      a = analyses[i] || {};
+      reasons = [];
+      temps = [];
+      for (j = 0; j < lumetri.length; j++) if (sceneOf[j] === sceneOf[i]) temps.push(lumetri[j].temperature);
+      medT = temps.length ? medianNum(temps) : 0;
+      if (Math.abs(L.temperature) > 14) reasons.push("T" + L.temperature);
+      if (Math.abs(L.temperature - medT) > 7) reasons.push("sahneT");
+      if (L.whites > 10) reasons.push("whites" + L.whites);
+      if (L.blacks > 8) reasons.push("blacks");
+      if (Math.abs(L.exposure) > 0.3) reasons.push("E" + L.exposure);
+      if ((a.skinPct || 0) > 2 && L.temperature < -10) reasons.push("tenSoguk");
+      if (reasons.length) flags.push({ i: i, reasons: reasons });
+    }
+    return flags;
+  }
+
+  function qcPicture(a, sceneMedLuma, L) {
+    var reasons = [];
+    if (!a) return reasons;
+    if ((a.skinPct || 0) > 2 && a.skinMeanB > a.skinMeanR * 0.98) reasons.push("tenMavi");
+    if (sceneMedLuma != null && Math.abs(a.meanLuma - sceneMedLuma) > 0.14) reasons.push("luma");
+    if (L && Math.abs(L.temperature) > 14) reasons.push("T");
+    return reasons;
+  }
+
+  function repairClip(L, sceneMed) {
+    return {
+      temperature: round1(L.temperature * 0.15 + sceneMed.temperature * 0.85),
+      tint: round1(L.tint * 0.25 + sceneMed.tint * 0.75),
+      exposure: round2(clamp(L.exposure * 0.3 + sceneMed.exposure * 0.7, -0.22, 0.2)),
+      contrast: L.contrast,
+      highlights: clamp(L.highlights, -28, 4),
+      shadows: L.shadows,
+      whites: round1(clamp(L.whites * 0.3 + sceneMed.whites * 0.7, -14, 6)),
+      blacks: round1(clamp(L.blacks, -12, 6)),
+      saturation: L.saturation,
+      vibrance: 0,
+      fadedFilm: 0,
+      vignette: 0,
+      shadowLuma: 0,
+      highlightLuma: 0
+    };
+  }
+
+  function sceneMedian(list, members) {
+    var i, k, keys, vals, out;
+    keys = ["temperature", "tint", "exposure", "whites", "blacks", "highlights", "contrast", "saturation"];
+    out = {};
+    for (k = 0; k < keys.length; k++) {
+      vals = [];
+      for (i = 0; i < members.length; i++) vals.push(list[members[i]][keys[k]]);
+      out[keys[k]] = medianNum(vals);
+    }
+    return out;
+  }
+
   function gradeAll(analyses, lookId, matchStrength) {
     var look = LOOKS[lookId] || LOOKS.belgesel;
     var scenes = clusterScenes(analyses);
     var out = [];
     var s, members, hero, j, idx, best, sc, heroIndex = 0;
+    var sceneOf;
     if (matchStrength == null) matchStrength = 0.88;
     for (s = 0; s < scenes.length; s++) {
       members = scenes[s];
@@ -395,14 +490,28 @@
         idx = members[j];
         out[idx] = buildClip(analyses[idx], look, hero, matchStrength);
       }
+      lockScene(out, members);
     }
-    return { lumetri: out, print: makePrint(look), scenes: scenes.length, heroIndex: heroIndex };
+    sceneOf = sceneOfFrom(scenes, analyses.length);
+    return {
+      lumetri: out,
+      print: makePrint(look),
+      scenes: scenes.length,
+      sceneLists: scenes,
+      sceneOf: sceneOf,
+      flags: flagClips(out, analyses, sceneOf),
+      heroIndex: heroIndex
+    };
   }
 
   root.USTAEngine = {
     analyzeImageData: analyzeImageData,
     medianAnalyses: medianAnalyses,
     gradeAll: gradeAll,
+    flagClips: flagClips,
+    qcPicture: qcPicture,
+    repairClip: repairClip,
+    sceneMedian: sceneMedian,
     LOOKS: LOOKS
   };
 })(this);

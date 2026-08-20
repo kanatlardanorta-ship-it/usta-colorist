@@ -2,6 +2,7 @@
   var logEl = document.getElementById("log");
   var hostReady = false;
   var busy = false;
+  var lastJob = null;
 
   function log(msg) {
     logEl.textContent = String(msg == null ? "" : msg);
@@ -32,9 +33,8 @@
 
   function fileUrl(p) {
     p = String(p).replace(/\\/g, "/");
-    if (/^[A-Za-z]:\//.test(p)) return "file:///" + p;
-    if (p.indexOf("file:") === 0) return p;
-    return "file://" + p;
+    if (p.charAt(0) !== "/") p = "/" + p;
+    return "file://" + encodeURI(p);
   }
 
   function pad4(n) {
@@ -79,36 +79,6 @@
     var ctx = c.getContext("2d");
     ctx.drawImage(img, 0, 0, c.width, c.height);
     return window.USTAEngine.analyzeImageData(ctx.getImageData(0, 0, c.width, c.height));
-  }
-
-  function analyzeFolder(folder, count, names, onDone) {
-    var analyses = [];
-    var i = 0;
-    function next() {
-      if (i >= count) {
-        onDone(null, analyses);
-        return;
-      }
-      var idx = i;
-      var path = folder + "/usta_" + pad4(idx + 1) + ".png";
-      log("Analiz " + (idx + 1) + "/" + count + "  " + (names[idx] || ""));
-      loadImage(path, function (err, img) {
-        if (err || !img) {
-          analyses[idx] = null;
-          i++;
-          next();
-          return;
-        }
-        try {
-          analyses[idx] = analyzeImg(img);
-        } catch (eA) {
-          analyses[idx] = null;
-        }
-        i++;
-        next();
-      });
-    }
-    next();
   }
 
   function applyList(lumetriList, cb) {
@@ -179,29 +149,14 @@
         for (k = 0; k < analyses.length; k++) if (analyses[k]) okN++;
         if (!fillMissing(analyses)) {
           busy = false;
-          log(
-            "Hic PNG okunamadi (" +
-              exported +
-              "/" +
-              info.count +
-              "). Premiere kare vermedi.\nTemp: " +
-              info.folder
-          );
+          log("Hic PNG okunamadi (" + exported + "/" + info.count + ").");
           return;
         }
         var look = document.getElementById("look").value || "belgesel";
         var graded = window.USTAEngine.gradeAll(analyses, look, 0.88);
         var lines = [];
         lines.push(
-          "Analiz " +
-            okN +
-            "/" +
-            info.count +
-            "  look " +
-            look +
-            "  sahneler " +
-            graded.scenes +
-            "  V1=trim  V2=print"
+          "Analiz " + okN + "/" + info.count + "  look " + look + "  sahneler " + graded.scenes + "  V1=trim V2=print"
         );
         for (k = 0; k < graded.lumetri.length; k++) {
           var g = graded.lumetri[k];
@@ -230,14 +185,39 @@
           var raw = JSON.stringify(graded.print);
           var escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
           evalScript('USTA_applyPrintJson("' + escaped + '")', function (pres) {
-            busy = false;
+            lastJob = {
+              lumetri: graded.lumetri,
+              print: graded.print,
+              sceneLists: graded.sceneLists,
+              sceneOf: graded.sceneOf,
+              flags: graded.flags || [],
+              names: names.slice(),
+              analyses: analyses,
+              count: info.count
+            };
+            var flagTxt = "";
+            if (lastJob.flags.length) {
+              flagTxt =
+                "\nSlider QC: " +
+                lastJob.flags.length +
+                " supheli\n" +
+                lastJob.flags
+                  .slice(0, 15)
+                  .map(function (f) {
+                    return "#" + (f.i + 1) + " " + (f.reasons || []).join(",");
+                  })
+                  .join("\n");
+            }
             log(
               lines.join("\n") +
                 "\n" +
                 (res && res !== "undefined" ? res : "trim ok") +
                 "\n" +
-                (pres && pres !== "undefined" ? pres : "print ok")
+                (pres && pres !== "undefined" ? pres : "print ok") +
+                flagTxt +
+                "\nKontrol (grade sonrasi kare)..."
             );
+            runPictureQc();
           });
         });
       }
@@ -269,20 +249,11 @@
               return;
             }
             if (i === 0 && fi === 0) {
-              log(
-                "probe method=" +
-                  (one.method || "-") +
-                  " exists=" +
-                  one.exists +
-                  " listed=" +
-                  (one.listed || "") +
-                  " err=" +
-                  (one.err || "")
-              );
+              log("probe method=" + (one.method || "-") + " exists=" + one.exists + " err=" + (one.err || ""));
             }
             if (i >= 2 && exported === 0 && !one.exists && fi === 0) {
               busy = false;
-              log("Ilk kareler yazilmadi, durdu.\nerr=" + (one.err || res) + "\nlisted=" + (one.listed || ""));
+              log("Ilk kareler yazilmadi.\nerr=" + (one.err || res));
               return;
             }
             names[i] = one.name || names[i] || "";
@@ -310,6 +281,122 @@
     });
   }
 
+  function runPictureQc() {
+    if (!lastJob) {
+      log("Once grade et.");
+      return;
+    }
+    busy = true;
+    var i = 0;
+    var extra = [];
+    function done() {
+      var f, seen, k;
+      seen = {};
+      for (k = 0; k < lastJob.flags.length; k++) seen[lastJob.flags[k].i] = true;
+      for (k = 0; k < extra.length; k++) {
+        if (!seen[extra[k].i]) lastJob.flags.push(extra[k]);
+        else {
+          f = lastJob.flags.filter(function (x) {
+            return x.i === extra[k].i;
+          })[0];
+          if (f) f.reasons = f.reasons.concat(extra[k].reasons);
+        }
+      }
+      busy = false;
+      if (!lastJob.flags.length) {
+        log("Kontrol: hatali klip yok.");
+        return;
+      }
+      log(
+        "Kontrol bitti. " +
+          lastJob.flags.length +
+          " hatali klip.\n" +
+          lastJob.flags
+            .slice(0, 25)
+            .map(function (fl) {
+              return "#" + (fl.i + 1) + " " + (lastJob.names[fl.i] || "") + " " + fl.reasons.join(",");
+            })
+            .join("\n") +
+          (lastJob.flags.length > 25 ? "\n..." : "") +
+          "\nHatalari duzelt'e bas."
+      );
+    }
+    function next() {
+      if (i >= lastJob.count) {
+        done();
+        return;
+      }
+      log("Kontrol " + (i + 1) + "/" + lastJob.count);
+      evalScript("USTA_exportOne(" + i + ",0.42)", function (res) {
+        var one;
+        try {
+          one = JSON.parse(String(res || "{}"));
+        } catch (e1) {
+          i++;
+          next();
+          return;
+        }
+        if (!one.exists) {
+          i++;
+          next();
+          return;
+        }
+        loadImage(one.path, function (err, img) {
+          var a, reasons, members, medL, j;
+          if (!err && img) {
+            try {
+              a = analyzeImg(img);
+              members = [];
+              for (j = 0; j < lastJob.sceneOf.length; j++) if (lastJob.sceneOf[j] === lastJob.sceneOf[i]) members.push(j);
+              medL = 0;
+              for (j = 0; j < members.length; j++) medL += (lastJob.analyses[members[j]] || {}).meanLuma || 0;
+              medL = members.length ? medL / members.length : 0.36;
+              reasons = window.USTAEngine.qcPicture(a, medL, lastJob.lumetri[i]);
+              if (reasons.length) extra.push({ i: i, reasons: reasons });
+            } catch (eA) {}
+          }
+          i++;
+          next();
+        });
+      });
+    }
+    next();
+  }
+
+  function runFix() {
+    if (!lastJob || !lastJob.flags.length) {
+      log("Duzeltilecek hata yok.");
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    var queue = lastJob.flags.slice();
+    var report = [];
+    function nextFix() {
+      var f, members, med, fixed, raw, escaped, j;
+      if (!queue.length) {
+        lastJob.flags = [];
+        busy = false;
+        log("Duzeltildi:\n" + report.join("\n"));
+        return;
+      }
+      f = queue.shift();
+      members = [];
+      for (j = 0; j < lastJob.sceneOf.length; j++) if (lastJob.sceneOf[j] === lastJob.sceneOf[f.i]) members.push(j);
+      med = window.USTAEngine.sceneMedian(lastJob.lumetri, members);
+      fixed = window.USTAEngine.repairClip(lastJob.lumetri[f.i], med);
+      lastJob.lumetri[f.i] = fixed;
+      log("Duzeltiliyor " + (f.i + 1) + " " + (lastJob.names[f.i] || "") + " T" + fixed.temperature);
+      raw = JSON.stringify({ lumetri: fixed });
+      escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      evalScript("USTA_applyOne(" + f.i + ',"' + escaped + '")', function (r) {
+        report.push("#" + (f.i + 1) + " T" + fixed.temperature + " E" + fixed.exposure + " " + r);
+        nextFix();
+      });
+    }
+    nextFix();
+  }
+
   function evalFileFallbacks(done) {
     var base = extPath();
     var variants = [
@@ -322,71 +409,65 @@
         done(false, "host.jsx yuklenemedi");
         return;
       }
-      var code = variants[i++];
-      evalScript(code, function (r) {
-        var s = String(r || "");
-        if (s.indexOf("EvalScript") >= 0 || s.indexOf("Error") >= 0) {
-          next();
+      evalScript(variants[i], function (r) {
+        if (r && String(r).indexOf("EvalScript error") < 0 && String(r).indexOf("IOError") < 0) {
+          done(true, r);
           return;
         }
-        done(true, s);
+        i++;
+        next();
       });
     }
     next();
   }
 
-  function afterHost(ok, detail) {
-    if (!ok) {
-      log(detail || "host yuklenemedi");
-      return;
-    }
-    evalScript("USTA_ping()", function (p) {
-      var s = String(p || "");
-      if (s.indexOf("EvalScript") >= 0) {
-        hostReady = false;
-        log("host yok: " + s);
-        return;
-      }
-      hostReady = true;
-      log(s + "\nHazir. Analiz et = klibe ozel grade.");
-    });
-  }
-
   function loadHost() {
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "jsx/host.jsx", true);
+    var xhr;
+    var href = extPath() + "/jsx/host.jsx";
     try {
-      xhr.overrideMimeType("text/plain; charset=utf-8");
-    } catch (eM) {}
-    xhr.onreadystatechange = function () {
-      if (xhr.readyState !== 4) return;
-      var src = xhr.responseText || "";
-      if (src.length < 40) {
-        evalFileFallbacks(afterHost);
-        return;
-      }
-      evalScript(src, function (r) {
-        var s = String(r || "");
-        if (s.indexOf("EvalScript") >= 0) {
-          evalFileFallbacks(afterHost);
-          return;
+      xhr = new XMLHttpRequest();
+      xhr.open("GET", "jsx/host.jsx", true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) {
+          evalScript(xhr.responseText, function () {
+            evalScript("USTA_ping()", function (p) {
+              hostReady = true;
+              log("host " + p);
+            });
+          });
+        } else {
+          evalFileFallbacks(function (ok, msg) {
+            if (ok) {
+              evalScript("USTA_ping()", function (p) {
+                hostReady = true;
+                log("host " + p);
+              });
+            } else log(msg);
+          });
         }
-        afterHost(true, s);
+      };
+      xhr.send();
+    } catch (eX) {
+      evalFileFallbacks(function (ok, msg) {
+        log(ok ? msg : String(eX));
       });
-    };
-    xhr.onerror = function () {
-      evalFileFallbacks(afterHost);
-    };
-    xhr.send();
+    }
   }
 
   document.getElementById("grade").onclick = function () {
     runAnalyzeGrade();
   };
+  document.getElementById("qc").onclick = function () {
+    runPictureQc();
+  };
+  document.getElementById("fix").onclick = function () {
+    runFix();
+  };
   document.getElementById("frames").onclick = function () {
     log("Temp kare klasoru aciliyor...");
     evalScript("USTA_openTemp()", function (r) {
-      log("Klasor: " + r + "\nKare aktarimi Analiz butonunda kare kare olur. Bu buton sadece klasoru acar.");
+      log("Klasor: " + r);
     });
   };
 
