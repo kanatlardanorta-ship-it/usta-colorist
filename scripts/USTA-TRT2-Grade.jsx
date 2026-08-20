@@ -22,6 +22,18 @@
   }
 }
 
+function USTA_beginUndo(name) {
+  try {
+    if (typeof app.beginUndoGroup === "function") app.beginUndoGroup(name);
+  } catch (e) {}
+}
+
+function USTA_endUndo() {
+  try {
+    if (typeof app.endUndoGroup === "function") app.endUndoGroup();
+  } catch (e) {}
+}
+
 function USTA_getFx(nameList) {
   var i, fx;
   for (i = 0; i < nameList.length; i++) {
@@ -49,51 +61,95 @@ function USTA_findLumetri(clip) {
   return USTA_findComp(clip, "lumetri");
 }
 
-function USTA_setParam(comp, names, value) {
-  var i, k, p, nm;
-  if (!comp || !comp.properties) return false;
+function USTA_hitName(display, names) {
+  var i, a, b;
+  a = ("" + display).toLowerCase();
   for (i = 0; i < names.length; i++) {
-    nm = names[i];
-    try {
-      p = comp.properties.getParamForDisplayName(nm);
-      if (p) {
-        try {
-          p.setValue(value, 1);
-        } catch (eA) {
-          p.setValue(value);
-        }
-        return true;
-      }
-    } catch (e0) {}
-    try {
-      for (k = 0; k < comp.properties.numItems; k++) {
-        p = comp.properties[k];
-        if (p && ("" + p.displayName) === nm) {
-          try {
-            p.setValue(value, 1);
-          } catch (eB) {
-            p.setValue(value);
-          }
-          return true;
-        }
-      }
-    } catch (e1) {}
+    b = ("" + names[i]).toLowerCase();
+    if (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return true;
   }
   return false;
 }
 
+function USTA_writeProp(p, value) {
+  try {
+    p.setValue(value, 1);
+    return true;
+  } catch (e0) {
+    try {
+      p.setValue(value, true);
+      return true;
+    } catch (e1) {
+      try {
+        p.setValue(value);
+        return true;
+      } catch (e2) {
+        return false;
+      }
+    }
+  }
+}
+
+function USTA_walkSet(props, names, value, depth) {
+  var i, p;
+  if (!props || depth > 5) return false;
+  try {
+    if (props.getParamForDisplayName) {
+      for (i = 0; i < names.length; i++) {
+        try {
+          p = props.getParamForDisplayName(names[i]);
+          if (p && USTA_writeProp(p, value)) return true;
+        } catch (eG) {}
+      }
+    }
+  } catch (e0) {}
+  try {
+    for (i = 0; i < props.numItems; i++) {
+      p = props[i];
+      if (!p) continue;
+      if (USTA_hitName(p.displayName, names)) {
+        if (USTA_writeProp(p, value)) return true;
+      }
+      if (p.properties && p.properties.numItems) {
+        if (USTA_walkSet(p.properties, names, value, depth + 1)) return true;
+      }
+    }
+  } catch (e1) {}
+  return false;
+}
+
+function USTA_setParam(comp, names, value) {
+  if (!comp || !comp.properties) return false;
+  return USTA_walkSet(comp.properties, names, value, 0);
+}
+
+function USTA_dumpProps(comp, prefix, acc, depth) {
+  var i, p, n;
+  if (!comp || !comp.properties || depth > 4 || acc.length > 40) return;
+  try {
+    for (i = 0; i < comp.properties.numItems; i++) {
+      p = comp.properties[i];
+      n = prefix + (p ? p.displayName : "?");
+      acc.push(n);
+      if (p && p.properties && p.properties.numItems) {
+        USTA_dumpProps(p, n + "/", acc, depth + 1);
+      }
+    }
+  } catch (e) {}
+}
+
 function USTA_applyToComponent(comp, g) {
   var n = 0;
-  if (USTA_setParam(comp, ["Temperature", "Sicaklik"], g.t)) n++;
+  if (USTA_setParam(comp, ["Temperature", "Sicaklik", "Sıcaklık"], g.t)) n++;
   if (USTA_setParam(comp, ["Tint", "Ton"], g.i)) n++;
   if (USTA_setParam(comp, ["Exposure", "Pozlama"], g.e)) n++;
   if (USTA_setParam(comp, ["Contrast", "Kontrast"], g.c)) n++;
-  if (USTA_setParam(comp, ["Highlights", "Acik Tonlar"], g.h)) n++;
-  if (USTA_setParam(comp, ["Shadows", "Golgeler"], g.s)) n++;
+  if (USTA_setParam(comp, ["Highlights", "Acik Tonlar", "Açık Tonlar"], g.h)) n++;
+  if (USTA_setParam(comp, ["Shadows", "Golgeler", "Gölgeler"], g.s)) n++;
   if (USTA_setParam(comp, ["Whites", "Beyazlar"], g.w)) n++;
   if (USTA_setParam(comp, ["Blacks", "Siyahlar"], g.b)) n++;
   if (USTA_setParam(comp, ["Saturation", "Doygunluk"], g.sat)) n++;
-  if (USTA_setParam(comp, ["Vibrance", "Canlilik"], g.v)) n++;
+  if (USTA_setParam(comp, ["Vibrance", "Canlilik", "Canlılık"], g.v)) n++;
   return n;
 }
 
@@ -119,7 +175,7 @@ function USTA_qeItemAt(qeTrack, index) {
 }
 
 function USTA_run(grades) {
-  var seq, track, qeTrack, applied, bcOk, paramOk, i, clip, g, qeItem, lum, bc, wrote;
+  var seq, track, qeTrack, applied, bcOk, paramOk, i, clip, g, qeItem, lum, bc, wrote, dump;
   if (!app.project || !app.project.activeSequence) {
     return "ERR: aktif sekans yok";
   }
@@ -128,10 +184,11 @@ function USTA_run(grades) {
   } catch (eQE) {
     return "ERR: QE acilamadi";
   }
-  app.beginUndoGroup("USTA TRT-2 Grade");
+  USTA_beginUndo("USTA TRT-2 Grade");
   applied = 0;
   bcOk = 0;
   paramOk = 0;
+  dump = [];
   try {
     seq = app.project.activeSequence;
     track = seq.videoTracks[0];
@@ -155,10 +212,13 @@ function USTA_run(grades) {
         wrote = USTA_applyToComponent(lum, g);
         applied++;
         paramOk += wrote;
+        if (wrote === 0 && dump.length === 0) {
+          USTA_dumpProps(lum, "", dump, 0);
+        }
       }
       bc = USTA_findComp(clip, "broadcast") || USTA_findComp(clip, "limiter") || USTA_findComp(clip, "legal");
       if (!bc && qeItem) {
-        if (USTA_addFxToQeClip(qeItem, ["Broadcast Colors", "Yayin Renkleri", "Video Limiter"])) {
+        if (USTA_addFxToQeClip(qeItem, ["Broadcast Colors", "Yayin Renkleri", "Yayın Renkleri", "Video Limiter"])) {
           bcOk++;
         }
       } else if (bc) {
@@ -166,15 +226,15 @@ function USTA_run(grades) {
       }
     }
   } catch (eRun) {
-    try {
-      app.endUndoGroup();
-    } catch (eUg) {}
+    USTA_endUndo();
     return "ERR: " + eRun;
   }
-  try {
-    app.endUndoGroup();
-  } catch (eUg2) {}
-  return "OK " + applied + " Lumetri / " + paramOk + " param / " + bcOk + " legalizer. Undo: Ctrl+Z";
+  USTA_endUndo();
+  if (applied === 0) return "ERR: V1'de klip/Lumetri yok";
+  if (paramOk === 0) {
+    return "OK " + applied + " Lumetri bulundu ama parametre yazilamadi. Props: " + dump.join(", ");
+  }
+  return "OK " + applied + " Lumetri / " + paramOk + " param / " + bcOk + " legalizer";
 }
 
 function USTA_grade() {
@@ -227,7 +287,9 @@ function USTA_exportFrames() {
     folder = Folder.selectDialog("USTA kare klasoru");
     if (!folder) return "iptal";
     ok = 0;
-    app.enableQE();
+    try {
+      app.enableQE();
+    } catch (eQ) {}
     for (i = 0; i < track.clips.numItems; i++) {
       clip = track.clips[i];
       t = clip.start.seconds + clip.duration.seconds * 0.35;
