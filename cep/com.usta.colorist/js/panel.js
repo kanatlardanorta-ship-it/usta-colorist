@@ -44,12 +44,29 @@
 
   function loadImage(path, cb) {
     var img = new Image();
+    function fail() {
+      try {
+        if (window.cep && window.cep.fs && window.cep.fs.readFile) {
+          var winPath = String(path).replace(/\//g, "\\");
+          var r = window.cep.fs.readFile(winPath, "Base64");
+          if (r && r.err === 0 && r.data) {
+            img.onload = function () {
+              cb(null, img);
+            };
+            img.onerror = function () {
+              cb("b64 " + path);
+            };
+            img.src = "data:image/png;base64," + r.data;
+            return;
+          }
+        }
+      } catch (eC) {}
+      cb("img " + path);
+    }
     img.onload = function () {
       cb(null, img);
     };
-    img.onerror = function () {
-      cb("img " + path);
-    };
+    img.onerror = fail;
     img.src = fileUrl(path);
   }
 
@@ -218,7 +235,13 @@
           finish();
           return;
         }
-        log("Kare " + (i + 1) + "/" + info.count + " aktar + analiz...");
+        log(
+          "Kare " +
+            (i + 1) +
+            "/" +
+            info.count +
+            " aktar + analiz..."
+        );
         evalScript("USTA_exportOne(" + i + ")", function (res) {
           var one;
           try {
@@ -228,6 +251,34 @@
             analyses[i] = null;
             i++;
             next();
+            return;
+          }
+          if (i < 3) {
+            log(
+              "Kare " +
+                (i + 1) +
+                " method=" +
+                (one.method || "-") +
+                " exists=" +
+                one.exists +
+                " nfiles=" +
+                one.nfiles +
+                " err=" +
+                (one.err || "")
+            );
+          }
+          if (i >= 2 && exported === 0 && !one.exists) {
+            busy = false;
+            log(
+              "Ilk 3 kare yazilmadi, durdu.\n" +
+                "method=" +
+                (one.method || "-") +
+                "\nerr=" +
+                (one.err || res) +
+                "\nTemp: " +
+                info.folder +
+                "\nBu metni gonder."
+            );
             return;
           }
           names[i] = one.name || "";
