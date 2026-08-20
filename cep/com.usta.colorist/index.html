@@ -14,16 +14,21 @@
       </div>
     </header>
     <p class="lead">
-      Aktif sekans V1. LUT durur. Lumetri + Broadcast Colors eklenir. Tek undo grubu.
+      Her V1 klibinin orta karesi alınır, histogram / WB / ten / siyah-beyaz nokta ölçülür, klipler birbirine eşlenir.
+      Aynı sayılar basılmaz.
     </p>
-    <button id="grade" type="button">V1’i TRT-2 Grade Et</button>
-    <button id="frames" type="button" class="ghost">Kareleri PNG aktar</button>
-    <label class="json">
-      Tezgâh JSON (opsiyonel)
-      <textarea id="json" rows="6" placeholder='{"clips":[{"lumetri":{...}}]}'></textarea>
+    <label class="look">
+      Look
+      <select id="look">
+        <option value="belgesel" selected>Belgesel (TRT-2)</option>
+        <option value="notr">Yayın Nötr</option>
+        <option value="kultur">Kültür</option>
+      </select>
     </label>
-    <button id="fromjson" type="button" class="ghost">JSON ile uygula</button>
+    <button id="grade" type="button">Analiz et ve grade et</button>
+    <button id="frames" type="button" class="ghost">Kareleri PNG aktar</button>
     <pre id="log"></pre>
+    <script src="js/engine.js"></script>
     <script src="js/panel.js"></script>
   </body>
 </html>

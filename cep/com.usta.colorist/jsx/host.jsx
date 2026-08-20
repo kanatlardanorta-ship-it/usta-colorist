@@ -278,6 +278,84 @@ function USTA_applyJson(raw) {
   }
 }
 
+function USTA_esc(s) {
+  return ("" + s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function USTA_pad(n) {
+  var s = "0000" + n;
+  return s.substring(s.length - 4);
+}
+
+function USTA_exportSilent() {
+  var seq, track, folder, i, clip, t, out, ok, names, ticks, qeSeq;
+  try {
+    if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
+    seq = app.project.activeSequence;
+    track = seq.videoTracks[0];
+    folder = new Folder(Folder.temp.fsName + "/USTA_frames");
+    if (!folder.exists) folder.create();
+    try {
+      var old = folder.getFiles("usta_*.png");
+      for (i = 0; i < old.length; i++) {
+        try {
+          old[i].remove();
+        } catch (eRm) {}
+      }
+    } catch (eOld) {}
+    try {
+      app.enableQE();
+    } catch (eQ) {}
+    try {
+      qeSeq = qe.project.getActiveSequence();
+    } catch (eQs) {
+      qeSeq = null;
+    }
+    ok = 0;
+    names = [];
+    for (i = 0; i < track.clips.numItems; i++) {
+      clip = track.clips[i];
+      t = clip.start.seconds + clip.duration.seconds * 0.35;
+      ticks = Math.round(t * 254016000000).toString();
+      try {
+        seq.setPlayerPosition(ticks);
+      } catch (ePos) {}
+      try {
+        $.sleep(60);
+      } catch (eSl) {}
+      out = new File(folder.fsName + "/usta_" + USTA_pad(i + 1) + ".png");
+      try {
+        if (seq.exportFramePNG) {
+          seq.exportFramePNG(seq.getPlayerPosition(), out.fsName);
+        } else if (qeSeq && qeSeq.player) {
+          qeSeq.player.exportFrame(out.fsName, 1);
+        }
+        if (out.exists) {
+          ok++;
+          names.push('"' + USTA_esc(clip.name) + '"');
+        } else {
+          names.push('""');
+        }
+      } catch (eExp) {
+        names.push('""');
+      }
+    }
+    return (
+      '{"ok":1,"folder":"' +
+      USTA_esc(folder.fsName.replace(/\\/g, "/")) +
+      '","count":' +
+      track.clips.numItems +
+      ',"exported":' +
+      ok +
+      ',"names":[' +
+      names.join(",") +
+      "]}"
+    );
+  } catch (e) {
+    return '{"ok":0,"err":"' + USTA_esc(e) + '"}';
+  }
+}
+
 function USTA_exportFrames() {
   var seq, track, folder, i, clip, t, out, ok;
   try {
