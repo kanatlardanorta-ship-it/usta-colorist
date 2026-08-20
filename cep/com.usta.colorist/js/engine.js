@@ -55,11 +55,29 @@
     }
   };
 
+  function toLin(u) {
+    return u <= 0.04045 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4);
+  }
+
+  function rgbHue(r, g, b) {
+    var max = r > g ? (r > b ? r : b) : g > b ? g : b;
+    var min = r < g ? (r < b ? r : b) : g < b ? g : b;
+    var d = max - min;
+    var h;
+    if (d < 1e-5) return 28;
+    if (max === r) h = (g - b) / d;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    return h;
+  }
+
   function isSkin(r, g, b) {
     var y = 0.299 * r + 0.587 * g + 0.114 * b;
     var cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
     var cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-    return cr > 133 && cr < 177 && cb > 77 && cb < 127 && y > 45 && y < 230 && r > g + 8 && g > b * 0.72;
+    return cr > 125 && cr < 185 && cb > 70 && cb < 132 && y > 22 && y < 245 && r >= g - 4 && r > b * 0.8;
   }
 
   function percentile(hist, total, p) {
@@ -80,12 +98,16 @@
     var lumaHist = [];
     var i;
     for (i = 0; i < 256; i++) lumaHist[i] = 0;
+    var hist32 = [];
+    for (i = 0; i < 32; i++) hist32[i] = 0;
     var meanR = 0, meanG = 0, meanB = 0, meanLuma = 0, meanSat = 0;
+    var meanRLin = 0, meanGLin = 0, meanBLin = 0, meanLumaLin = 0;
     var crushed = 0, clipped = 0, skinN = 0, skinR = 0, skinG = 0, skinB = 0;
-    var wbR = 0, wbG = 0, wbB = 0, wbN = 0;
+    var grayR = 0, grayG = 0, grayB = 0, grayN = 0;
     var centerLuma = 0, centerN = 0, cornerLuma = 0, cornerN = 0;
+    var minY = 1, maxY = 0, minCh = 1, maxCh = 0;
     var n = width * height;
-    var r8, g8, b8, r, g, b, y, max, min, pix, x, yx, dx, dy, d2;
+    var r8, g8, b8, r, g, b, y, max, min, pix, x, yx, dx, dy, d2, sat, rL, gL, bL, yL, ch;
     for (i = 0; i < px.length; i += 4) {
       r8 = px[i];
       g8 = px[i + 1];
@@ -93,15 +115,31 @@
       r = r8 / 255;
       g = g8 / 255;
       b = b8 / 255;
+      rL = toLin(r);
+      gL = toLin(g);
+      bL = toLin(b);
       y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      yL = 0.2126 * rL + 0.7152 * gL + 0.0722 * bL;
       lumaHist[(y * 255) | 0]++;
+      hist32[Math.min(31, (y * 32) | 0)]++;
       meanR += r;
       meanG += g;
       meanB += b;
       meanLuma += y;
+      meanRLin += rL;
+      meanGLin += gL;
+      meanBLin += bL;
+      meanLumaLin += yL;
       max = r > g ? (r > b ? r : b) : g > b ? g : b;
       min = r < g ? (r < b ? r : b) : g < b ? g : b;
-      meanSat += max === 0 ? 0 : (max - min) / max;
+      sat = max === 0 ? 0 : (max - min) / max;
+      meanSat += sat;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      ch = min;
+      if (ch < minCh) minCh = ch;
+      ch = max;
+      if (ch > maxCh) maxCh = ch;
       if (y < 0.02) crushed++;
       if (y > 0.98) clipped++;
       if (isSkin(r8, g8, b8)) {
@@ -110,11 +148,11 @@
         skinG += g;
         skinB += b;
       }
-      if (y > 0.12 && y < 0.88) {
-        wbN++;
-        wbR += r;
-        wbG += g;
-        wbB += b;
+      if (sat < 0.12 && yL > 0.05 && yL < 0.55) {
+        grayN++;
+        grayR += rL;
+        grayG += gL;
+        grayB += bL;
       }
       pix = (i / 4) | 0;
       x = pix % width;
@@ -136,13 +174,15 @@
     meanB *= inv;
     meanLuma *= inv;
     meanSat *= inv;
-    var wr = wbN ? wbR / wbN : meanR;
-    var wg = wbN ? wbG / wbN : meanG;
-    var wb = wbN ? wbB / wbN : meanB;
+    meanRLin *= inv;
+    meanGLin *= inv;
+    meanBLin *= inv;
+    meanLumaLin *= inv;
     return {
       blackPoint: percentile(lumaHist, n, 0.005),
       whitePoint: percentile(lumaHist, n, 0.995),
       meanLuma: meanLuma,
+      meanLumaLin: meanLumaLin,
       meanR: meanR,
       meanG: meanG,
       meanB: meanB,
@@ -155,7 +195,18 @@
       skinMeanB: skinN ? skinB / skinN : 0,
       centerLuma: centerN ? centerLuma / centerN : meanLuma,
       cornerLuma: cornerN ? cornerLuma / cornerN : meanLuma,
-      tempHint: clamp(((wr - wb) / Math.max(0.04, wg)) * 55, -80, 80)
+      grayN: grayN,
+      grayR: grayN ? grayR / grayN : 0,
+      grayG: grayN ? grayG / grayN : 0,
+      grayB: grayN ? grayB / grayN : 0,
+      hist: hist32,
+      minY: minY,
+      maxY: maxY,
+      minCh: minCh,
+      maxCh: maxCh,
+      minIRE: round1(minY * 100),
+      maxIRE: round1(maxY * 100),
+      tempHint: grayN > 12 ? clamp((((grayR / grayN) - (grayB / grayN)) / Math.max(0.04, grayG / grayN)) * 40, -40, 40) : 0
     };
   }
 
@@ -168,22 +219,26 @@
   }
 
   function wbGains(a) {
-    var rGain, gGain, bGain, curRG, curBG;
-    gGain = 1;
-    if (a.skinPct > 2.0 && a.skinMeanG > 0.04) {
-      curRG = a.skinMeanR / a.skinMeanG;
-      curBG = a.skinMeanB / a.skinMeanG;
-      rGain = 1.16 / Math.max(0.55, curRG);
-      bGain = 0.84 / Math.max(0.4, curBG);
-    } else {
-      rGain = a.meanG / Math.max(a.meanR, 0.02);
-      bGain = a.meanG / Math.max(a.meanB, 0.02);
+    var rGain = 1;
+    var gGain = 1;
+    var bGain = 1;
+    var h, err, gmean, limit;
+    if (a.grayN && a.grayN > 12) {
+      rGain = a.grayG / Math.max(a.grayR, 0.02);
+      bGain = a.grayG / Math.max(a.grayB, 0.02);
+    } else if (a.skinPct > 2 && a.skinMeanG > 0.03) {
+      h = rgbHue(a.skinMeanR, a.skinMeanG, a.skinMeanB);
+      if (h < 8 || h > 52) {
+        err = clamp(h - 28, -18, 18);
+        rGain = 1 - err * 0.005;
+        bGain = 1 + err * 0.004;
+      }
     }
-    var gmean = cbrt(Math.max(1e-6, rGain * gGain * bGain));
+    gmean = cbrt(Math.max(1e-6, rGain * gGain * bGain));
     rGain /= gmean;
     gGain /= gmean;
     bGain /= gmean;
-    var limit = a.skinPct > 2 ? 1.12 : 1.22;
+    limit = 1.1;
     return {
       rGain: clamp(rGain, 1 / limit, limit),
       gGain: clamp(gGain, 1 / limit, limit),
@@ -250,7 +305,7 @@
       ((clamp(a.meanLuma, t.blackIn, t.whiteIn) - t.blackIn) / Math.max(0.08, t.whiteIn - t.blackIn)) *
         (t.whiteOut - t.blackOut) +
       t.blackOut;
-    t.exposure = clamp(log2(0.36 / Math.max(0.05, after)), -1.0, 0.8);
+    t.exposure = clamp(log2(toLin(0.36) / Math.max(1e-4, a.meanLumaLin || toLin(Math.max(0.05, after)))), -0.32, 0.28);
     t.highlightComp = look.highlightComp + clamp(a.clippedPct / 50, 0, 0.12);
     t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.008 : 0);
     t.lookContrast = 1 + (look.contrast - 1) * 0.4 * (span > 0.82 ? 0.5 : span < 0.52 ? 1.35 : 1);
@@ -335,23 +390,68 @@
     out.skinMeanR = pick.skinMeanR;
     out.skinMeanG = pick.skinMeanG;
     out.skinMeanB = pick.skinMeanB;
+    out.hist = pick.hist;
+    out.grayN = pick.grayN;
+    out.grayR = pick.grayR;
+    out.grayG = pick.grayG;
+    out.grayB = pick.grayB;
+    out.meanLumaLin = pick.meanLumaLin;
+    out.minY = pick.minY;
+    out.maxY = pick.maxY;
+    out.minIRE = pick.minIRE;
+    out.maxIRE = pick.maxIRE;
     return out;
   }
 
-  function clusterScenes(analyses) {
-    var scenes = [];
-    var cur = [0];
-    var i, dL, dT;
-    for (i = 1; i < analyses.length; i++) {
-      dL = Math.abs((analyses[i].meanLuma || 0) - (analyses[i - 1].meanLuma || 0));
-      dT = Math.abs((analyses[i].tempHint || 0) - (analyses[i - 1].tempHint || 0));
-      if (dL > 0.13 || dT > 20) {
-        scenes.push(cur);
-        cur = [i];
-      } else cur.push(i);
+  function histChi2(h1, h2) {
+    var i, a, b, s;
+    s = 0;
+    if (!h1 || !h2) return 999;
+    for (i = 0; i < 32; i++) {
+      a = (h1[i] || 0) + 1;
+      b = (h2[i] || 0) + 1;
+      s += ((a - b) * (a - b)) / (a + b);
     }
-    scenes.push(cur);
-    return scenes;
+    return s;
+  }
+
+  function clusterScenes(analyses) {
+    var sceneOf = [];
+    var i, j, from, d, best, bestS, dRev, nScenes, scenes, cur, s;
+    sceneOf[0] = 0;
+    nScenes = 1;
+    for (i = 1; i < analyses.length; i++) {
+      best = 1e9;
+      bestS = sceneOf[i - 1];
+      from = Math.max(0, i - 10);
+      for (j = from; j < i; j++) {
+        d = histChi2(analyses[i].hist, analyses[j].hist);
+        if (d < best) {
+          best = d;
+          bestS = sceneOf[j];
+        }
+      }
+      if (i >= 2) {
+        dRev = histChi2(analyses[i].hist, analyses[i - 2].hist);
+        if (dRev < best) {
+          best = dRev;
+          bestS = sceneOf[i - 2];
+        }
+      }
+      if (best > 110 && Math.abs((analyses[i].meanLuma || 0) - (analyses[i - 1].meanLuma || 0)) > 0.12) {
+        sceneOf[i] = nScenes;
+        nScenes++;
+      } else sceneOf[i] = bestS;
+    }
+    scenes = [];
+    for (s = 0; s < nScenes; s++) scenes[s] = [];
+    for (i = 0; i < sceneOf.length; i++) {
+      if (!scenes[sceneOf[i]]) scenes[sceneOf[i]] = [];
+      scenes[sceneOf[i]].push(i);
+    }
+    cur = [];
+    for (s = 0; s < scenes.length; s++) if (scenes[s] && scenes[s].length) cur.push(scenes[s]);
+    return cur.length ? cur : [[0]];
   }
 
   function makePrint(look) {
@@ -433,6 +533,9 @@
     if ((a.skinPct || 0) > 2 && a.skinMeanB > a.skinMeanR * 0.98) reasons.push("tenMavi");
     if (sceneMedLuma != null && Math.abs(a.meanLuma - sceneMedLuma) > 0.14) reasons.push("luma");
     if (L && Math.abs(L.temperature) > 14) reasons.push("T");
+    if ((a.minIRE || 0) < 1 && (a.crushedPct || 0) > 2) reasons.push("crushIRE" + a.minIRE);
+    if ((a.maxIRE || 0) > 99 && (a.clippedPct || 0) > 1) reasons.push("clipIRE" + a.maxIRE);
+    if ((a.maxCh || 0) > 0.995 && (a.clippedPct || 0) > 0.8) reasons.push("R103");
     return reasons;
   }
 

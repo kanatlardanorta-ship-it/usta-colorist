@@ -1,0 +1,8 @@
+{
+  "debug": [
+    {
+      "port": 8099,
+      "type": "chrome"
+    }
+  ]
+}

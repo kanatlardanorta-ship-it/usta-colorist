@@ -22,13 +22,25 @@
   }
 }
 
+var USTA_UNDO_NEST = 0;
+
 function USTA_beginUndo(name) {
+  if (USTA_UNDO_NEST > 0) {
+    USTA_UNDO_NEST++;
+    return;
+  }
   try {
     if (typeof app.beginUndoGroup === "function") app.beginUndoGroup(name);
+    USTA_UNDO_NEST = 1;
   } catch (e) {}
 }
 
 function USTA_endUndo() {
+  if (USTA_UNDO_NEST > 1) {
+    USTA_UNDO_NEST--;
+    return;
+  }
+  USTA_UNDO_NEST = 0;
   try {
     if (typeof app.endUndoGroup === "function") app.endUndoGroup();
   } catch (e) {}
@@ -46,19 +58,38 @@ function USTA_getFx(nameList) {
 }
 
 function USTA_findComp(clip, needle) {
-  var i, c, name;
+  var i, c, name, mn;
   if (!clip || !clip.components) return null;
   needle = ("" + needle).toLowerCase();
   for (i = 0; i < clip.components.numItems; i++) {
     c = clip.components[i];
-    name = ("" + c.displayName).toLowerCase();
-    if (name.indexOf(needle) >= 0) return c;
+    try {
+      mn = ("" + c.matchName).toLowerCase();
+      if (mn.indexOf(needle) >= 0) return c;
+    } catch (e0) {}
+    try {
+      name = ("" + c.displayName).toLowerCase();
+      if (name.indexOf(needle) >= 0) return c;
+    } catch (e1) {}
   }
   return null;
 }
 
 function USTA_findLumetri(clip) {
-  return USTA_findComp(clip, "lumetri");
+  var i, c, mn, name;
+  if (!clip || !clip.components) return null;
+  for (i = 0; i < clip.components.numItems; i++) {
+    c = clip.components[i];
+    try {
+      mn = ("" + c.matchName).toLowerCase();
+      if (mn.indexOf("lumetri") >= 0 || mn.indexOf("adbe lumetri") >= 0) return c;
+    } catch (e0) {}
+    try {
+      name = ("" + c.displayName).toLowerCase();
+      if (name.indexOf("lumetri") >= 0) return c;
+    } catch (e1) {}
+  }
+  return null;
 }
 
 function USTA_hitName(display, names) {
@@ -72,22 +103,38 @@ function USTA_hitName(display, names) {
 }
 
 function USTA_writeProp(p, value) {
+  var got, scaled;
   try {
     p.setValue(value, 1);
-    return true;
   } catch (e0) {
     try {
       p.setValue(value, true);
-      return true;
     } catch (e1) {
       try {
         p.setValue(value);
-        return true;
       } catch (e2) {
         return false;
       }
     }
   }
+  try {
+    got = p.getValue();
+    if (typeof got === "object") return true;
+    if (typeof got === "boolean") return true;
+    if (typeof got === "number" && typeof value === "number") {
+      if (Math.abs(got - value) <= Math.max(0.2, Math.abs(value) * 0.2)) return true;
+      if (Math.abs(value) > 1.5) {
+        scaled = value / 100;
+        try {
+          p.setValue(scaled, 1);
+          got = p.getValue();
+          if (Math.abs(got - scaled) < 0.08 || Math.abs(got - value) <= 1) return true;
+        } catch (eS) {}
+      }
+      return false;
+    }
+  } catch (eG) {}
+  return true;
 }
 
 function USTA_walkSet(props, names, value, depth) {
@@ -282,6 +329,43 @@ function USTA_qeItemAt(qeTrack, index) {
   }
 }
 
+function USTA_qeItemForClip(qeTrack, clip) {
+  var i, item, ticks, name, cs, ns, it;
+  if (!qeTrack || !clip) return null;
+  try {
+    ticks = "" + clip.start.ticks;
+  } catch (e0) {
+    ticks = "";
+  }
+  try {
+    name = "" + clip.name;
+  } catch (e1) {
+    name = "";
+  }
+  try {
+    cs = clip.start.seconds;
+  } catch (e2) {
+    cs = null;
+  }
+  for (i = 0; i < 800; i++) {
+    try {
+      item = qeTrack.getItemAt(i);
+    } catch (e3) {
+      break;
+    }
+    if (!item) break;
+    try {
+      it = "" + item.start.ticks;
+      if (ticks && it && ticks === it) return item;
+    } catch (e4) {}
+    try {
+      ns = item.start.seconds;
+      if (cs != null && Math.abs(ns - cs) < 0.05 && ("" + item.name) === name) return item;
+    } catch (e5) {}
+  }
+  return null;
+}
+
 function USTA_run(grades) {
   var seq, track, qeTrack, applied, bcOk, paramOk, i, clip, g, qeItem, lum, bc, wrote, dump;
   if (!app.project || !app.project.activeSequence) {
@@ -310,7 +394,8 @@ function USTA_run(grades) {
       g = grades[i];
       if (!g) g = grades[grades.length - 1];
       if (!g) continue;
-      qeItem = qeTrack ? USTA_qeItemAt(qeTrack, i) : null;
+      qeItem = qeTrack ? USTA_qeItemForClip(qeTrack, clip) : null;
+      if (!qeItem && qeTrack) qeItem = USTA_qeItemAt(qeTrack, i);
       lum = USTA_findLumetri(clip);
       if (!lum && qeItem) {
         USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
@@ -438,6 +523,28 @@ function USTA_sep() {
   return Folder.fs === "Macintosh" ? "/" : "\\";
 }
 
+var USTA_FRAMES = null;
+
+function USTA_frameFolder() {
+  var f;
+  if (USTA_FRAMES && USTA_FRAMES.exists) return USTA_FRAMES;
+  f = new Folder(Folder.temp.fsName + USTA_sep() + "USTA_frames");
+  if (!f.exists) f.create();
+  USTA_FRAMES = f;
+  return f;
+}
+
+function USTA_mtime(path) {
+  var f;
+  try {
+    f = new File(path);
+    if (!f.exists) return 0;
+    return f.modified ? f.modified.getTime() : 1;
+  } catch (e) {
+    return 0;
+  }
+}
+
 function USTA_stem(folder, index) {
   return folder.fsName + USTA_sep() + "usta_" + USTA_pad(index + 1);
 }
@@ -523,7 +630,8 @@ function USTA_beginExport() {
     if (!app.project || !app.project.activeSequence) return '{"ok":0,"err":"sekans yok"}';
     seq = app.project.activeSequence;
     track = seq.videoTracks[0];
-    folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
+    USTA_FRAMES = null;
+    folder = USTA_frameFolder();
     if (!folder.exists) folder.create();
     try {
       old = folder.getFiles("usta_*");
@@ -557,11 +665,26 @@ function USTA_exportOne(index, frac) {
     try { seq.setPlayerPosition(ticks); } catch (ePos) {}
     try { app.enableQE(); } catch (eQ) {}
     try { qeSeq = qe.project.getActiveSequence(); } catch (eQs) { qeSeq = null; }
-    try { $.sleep(140); } catch (eSl) {}
-    folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
+    try { $.sleep(50); } catch (eSl) {}
+    folder = USTA_frameFolder();
     if (!folder.exists) folder.create();
     stem = folder.fsName + USTA_sep() + "usta_" + USTA_pad(index + 1) + "_" + Math.round(frac * 100);
+    var before = USTA_mtime(stem + ".png") + USTA_mtime(stem + ".png.png");
     wrote = USTA_tryWritePng(seq, qeSeq, stem, t);
+    var tries = 0;
+    while (tries < 3 && (!wrote.path || (before && USTA_mtime(wrote.path) === before))) {
+      tries++;
+      try { seq.setPlayerPosition(ticks); } catch (eR) {}
+      try { $.sleep(100); } catch (eS2) {}
+      wrote = USTA_tryWritePng(seq, qeSeq, stem, t);
+    }
+    if (!wrote.path) {
+      USTA_FRAMES = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
+      if (!USTA_FRAMES.exists) USTA_FRAMES.create();
+      folder = USTA_FRAMES;
+      stem = folder.fsName + USTA_sep() + "usta_" + USTA_pad(index + 1) + "_" + Math.round(frac * 100);
+      wrote = USTA_tryWritePng(seq, qeSeq, stem, t);
+    }
     nfiles = 0;
     listed = "";
     try {
@@ -588,7 +711,7 @@ function USTA_exportOne(index, frac) {
 
 function USTA_openTemp() {
   try {
-    var folder = new Folder(Folder.desktop.fsName + USTA_sep() + "USTA_frames");
+    var folder = USTA_frameFolder();
     if (!folder.exists) folder.create();
     folder.execute();
     return folder.fsName;
@@ -756,7 +879,7 @@ function USTA_applyPrintJson(raw) {
   }
   for (i = 0; i < track.clips.numItems; i++) {
     clip = track.clips[i];
-    qeItem = qeTrack ? USTA_qeItemAt(qeTrack, i) : null;
+    qeItem = qeTrack ? USTA_qeItemForClip(qeTrack, clip) : null;
     if (USTA_lumetriCount(clip) < 2 && qeItem) {
       USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
     }
@@ -771,6 +894,75 @@ function USTA_applyPrintJson(raw) {
 }
 
 function USTA_applyOne(index, raw) {
+  var data, L, g, clip, lum, qeTrack, qeItem, wrote;
+  USTA_beginUndo("USTA Fix");
+  try {
+    index = parseInt(index, 10);
+    data = eval("(" + raw + ")");
+    L = data.lumetri || data;
+    if (!app.project || !app.project.activeSequence) {
+      USTA_endUndo();
+      return "ERR sekans";
+    }
+    clip = app.project.activeSequence.videoTracks[0].clips[index];
+    if (!clip) {
+      USTA_endUndo();
+      return "ERR clip";
+    }
+    g = {
+      t: L.temperature,
+      i: L.tint,
+      e: L.exposure,
+      c: L.contrast,
+      h: L.highlights,
+      s: L.shadows,
+      w: L.whites,
+      b: L.blacks,
+      sat: L.saturation,
+      v: 0,
+      ff: 0,
+      vg: 0,
+      sl: 0,
+      hl: 0
+    };
+    lum = USTA_findLumetri(clip);
+    if (!lum) {
+      try {
+        qeTrack = qe.project.getActiveSequence().getVideoTrackAt(0);
+        qeItem = USTA_qeItemForClip(qeTrack, clip);
+        USTA_addFxToQeClip(qeItem, ["Lumetri Color", "Lumetri Rengi", "Lumetri"]);
+        lum = USTA_findLumetri(clip);
+      } catch (eA) {}
+    }
+    if (!lum) {
+      USTA_endUndo();
+      return "ERR lumetri";
+    }
+    wrote = USTA_applyToComponent(lum, g);
+    USTA_endUndo();
+    return "OK clip " + (index + 1) + " " + (wrote.n || 0) + "p";
+  } catch (e) {
+    USTA_endUndo();
+    return "ERR one " + e;
+  }
+}
+
+function USTA_gradeAllJson(trimRaw, printRaw) {
+  var a, b;
+  USTA_beginUndo("USTA Grade");
+  try {
+    a = USTA_applyJson(trimRaw);
+  } catch (e0) {
+    a = "ERR trim " + e0;
+  }
+  try {
+    b = USTA_applyPrintJson(printRaw);
+  } catch (e1) {
+    b = "ERR print " + e1;
+  }
+  USTA_endUndo();
+  return a + " || " + b;
+}
   var data, L, g, clip, lum, qeTrack, qeItem, wrote;
   try {
     index = parseInt(index, 10);

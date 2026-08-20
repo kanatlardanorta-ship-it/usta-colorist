@@ -3,9 +3,18 @@
   var hostReady = false;
   var busy = false;
   var lastJob = null;
+  var cancelFlag = false;
+  var logLines = [];
 
   function log(msg) {
-    logEl.textContent = String(msg == null ? "" : msg);
+    logLines.push(String(msg == null ? "" : msg));
+    if (logLines.length > 48) logLines = logLines.slice(-48);
+    logEl.textContent = logLines.join("\n");
+  }
+
+  function logReset(msg) {
+    logLines = [String(msg == null ? "" : msg)];
+    logEl.textContent = logLines[0];
   }
 
   function evalScript(code, cb) {
@@ -124,6 +133,7 @@
       return;
     }
     busy = true;
+    cancelFlag = false;
     log("Hazirlik...");
     evalScript("USTA_beginExport()", function (r) {
       var info;
@@ -153,7 +163,8 @@
           return;
         }
         var look = document.getElementById("look").value || "belgesel";
-        var graded = window.USTAEngine.gradeAll(analyses, look, 0.88);
+        var match = (parseInt(document.getElementById("match").value, 10) || 88) / 100;
+        var graded = window.USTAEngine.gradeAll(analyses, look, match);
         var lines = [];
         lines.push(
           "Analiz " + okN + "/" + info.count + "  look " + look + "  sahneler " + graded.scenes + "  V1=trim V2=print"
@@ -180,11 +191,18 @@
               (100 + g.saturation)
           );
         }
-        log(lines.join("\n") + "\nV1 trim yaziliyor...");
-        applyList(graded.lumetri, function (res) {
-          var raw = JSON.stringify(graded.print);
-          var escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          evalScript('USTA_applyPrintJson("' + escaped + '")', function (pres) {
+        logReset(lines.join("\n") + "\nV1+V2 yaziliyor (tek undo)...");
+        var clips = [];
+        for (k = 0; k < graded.lumetri.length; k++) clips.push({ lumetri: graded.lumetri[k] });
+        var trimRaw = JSON.stringify({ clips: clips });
+        var printRaw = JSON.stringify(graded.print);
+        evalScript(
+          'USTA_gradeAllJson("' +
+            trimRaw.replace(/\\/g, "\\\\").replace(/"/g, '\\"') +
+            '","' +
+            printRaw.replace(/\\/g, "\\\\").replace(/"/g, '\\"') +
+            '")',
+          function (res) {
             lastJob = {
               lumetri: graded.lumetri,
               print: graded.print,
@@ -208,20 +226,23 @@
                   })
                   .join("\n");
             }
-            log(
+            logReset(
               lines.join("\n") +
                 "\n" +
-                (res && res !== "undefined" ? res : "trim ok") +
-                "\n" +
-                (pres && pres !== "undefined" ? pres : "print ok") +
+                (res && res !== "undefined" ? res : "yazildi") +
                 flagTxt +
                 "\nKontrol (grade sonrasi kare)..."
             );
             runPictureQc();
-          });
-        });
+          }
+        );
       }
       function next() {
+        if (cancelFlag) {
+          busy = false;
+          log("iptal");
+          return;
+        }
         if (i >= info.count) {
           finish();
           return;
@@ -322,6 +343,11 @@
       );
     }
     function next() {
+      if (cancelFlag) {
+        busy = false;
+        log("iptal");
+        return;
+      }
       if (i >= lastJob.count) {
         done();
         return;
@@ -457,6 +483,10 @@
 
   document.getElementById("grade").onclick = function () {
     runAnalyzeGrade();
+  };
+  document.getElementById("cancel").onclick = function () {
+    cancelFlag = true;
+    log("iptal istendi...");
   };
   document.getElementById("qc").onclick = function () {
     runPictureQc();
