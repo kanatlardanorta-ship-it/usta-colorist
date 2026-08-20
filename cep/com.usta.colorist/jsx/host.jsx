@@ -138,6 +138,52 @@ function USTA_dumpProps(comp, prefix, acc, depth) {
   } catch (e) {}
 }
 
+function USTA_getGroup(props, needles, depth) {
+  var i, p, name, n, g;
+  if (!props || depth > 5) return null;
+  try {
+    for (i = 0; i < props.numItems; i++) {
+      p = props[i];
+      if (!p) continue;
+      name = ("" + p.displayName).toLowerCase();
+      for (n = 0; n < needles.length; n++) {
+        if (name.indexOf(needles[n]) >= 0 && p.properties && p.properties.numItems) return p;
+      }
+      if (p.properties && p.properties.numItems) {
+        g = USTA_getGroup(p.properties, needles, depth + 1);
+        if (g) return g;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+function USTA_setIn(comp, groupNeedles, paramNames, value) {
+  var g;
+  if (!comp || !comp.properties) return false;
+  g = USTA_getGroup(comp.properties, groupNeedles, 0);
+  if (!g) return false;
+  return USTA_walkSet(g.properties, paramNames, value, 0);
+}
+
+function USTA_disableComp(comp) {
+  var p;
+  if (!comp || !comp.properties) return false;
+  try {
+    p = comp.properties[0];
+    if (p) {
+      p.setValue(false, 1);
+      return true;
+    }
+  } catch (e0) {
+    try {
+      p.setValue(0, 1);
+      return true;
+    } catch (e1) {}
+  }
+  return false;
+}
+
 function USTA_applyToComponent(comp, g) {
   var n = 0;
   if (USTA_setParam(comp, ["Temperature", "Sicaklik", "Sıcaklık"], g.t)) n++;
@@ -148,8 +194,29 @@ function USTA_applyToComponent(comp, g) {
   if (USTA_setParam(comp, ["Shadows", "Golgeler", "Gölgeler"], g.s)) n++;
   if (USTA_setParam(comp, ["Whites", "Beyazlar"], g.w)) n++;
   if (USTA_setParam(comp, ["Blacks", "Siyahlar"], g.b)) n++;
-  if (USTA_setParam(comp, ["Saturation", "Doygunluk"], 100 + g.sat)) n++;
-  if (USTA_setParam(comp, ["Vibrance", "Canlilik", "Canlılık"], g.v)) n++;
+  if (USTA_setIn(comp, ["basic", "temel", "correction", "duzelt"], ["Saturation", "Doygunluk"], 100 + g.sat)) n++;
+  else if (USTA_setParam(comp, ["Saturation", "Doygunluk"], 100 + g.sat)) n++;
+
+  if (g.v != null) {
+    if (USTA_setIn(comp, ["creative", "yaratici", "yaratıcı"], ["Vibrance", "Canlilik", "Canlılık"], g.v)) n++;
+  }
+  if (g.ff != null) {
+    if (USTA_setIn(comp, ["creative", "yaratici", "yaratıcı"], ["Faded Film", "Soluk Film", "Faded"], g.ff)) n++;
+  }
+  if (g.vg != null) {
+    if (USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Amount", "Miktar"], g.vg)) n++;
+    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Midpoint", "Orta Nokta"], 50);
+    USTA_setIn(comp, ["vignette", "vinyet", "vin yet"], ["Feather", "Yumusaklik", "Yumuşaklık"], 70);
+  }
+  if (g.sl != null) {
+    USTA_setIn(comp, ["wheel", "teker", "wheels"], ["Shadow Luma", "Shadows Luma", "Golge"], g.sl);
+  }
+  if (g.hl != null) {
+    USTA_setIn(comp, ["wheel", "teker", "wheels"], ["Highlight Luma", "Highlights Luma", "Acik"], g.hl);
+  }
+  if (g.curve) {
+    USTA_setIn(comp, ["curve", "egri", "eğri", "curves"], ["Master", "RGB", "Luma"], g.curve);
+  }
   return n;
 }
 
@@ -217,13 +284,7 @@ function USTA_run(grades) {
         }
       }
       bc = USTA_findComp(clip, "broadcast") || USTA_findComp(clip, "limiter") || USTA_findComp(clip, "legal");
-      if (!bc && qeItem) {
-        if (USTA_addFxToQeClip(qeItem, ["Broadcast Colors", "Yayin Renkleri", "Yayın Renkleri", "Video Limiter"])) {
-          bcOk++;
-        }
-      } else if (bc) {
-        bcOk++;
-      }
+      if (bc && USTA_disableComp(bc)) bcOk++;
     }
   } catch (eRun) {
     USTA_endUndo();
@@ -234,7 +295,7 @@ function USTA_run(grades) {
   if (paramOk === 0) {
     return "OK " + applied + " Lumetri bulundu ama parametre yazilamadi. Props: " + dump.join(", ");
   }
-  return "OK " + applied + " Lumetri / " + paramOk + " param / " + bcOk + " legalizer";
+  return "OK " + applied + " Lumetri / " + paramOk + " param / BC kapali " + bcOk;
 }
 
 function USTA_applyJson(raw) {
@@ -257,7 +318,11 @@ function USTA_applyJson(raw) {
         w: L.whites,
         b: L.blacks,
         sat: L.saturation,
-        v: L.vibrance
+        v: L.vibrance,
+        ff: L.fadedFilm,
+        vg: L.vignette,
+        sl: L.shadowLuma,
+        hl: L.highlightLuma
       };
       list.push(g);
     }

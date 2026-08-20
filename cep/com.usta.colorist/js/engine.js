@@ -17,9 +17,42 @@
   }
 
   var LOOKS = {
-    notr: { contrast: 1.06, sat: 1.0, warm: 0, shadowLift: 0.006, highlightComp: 0.02 },
-    belgesel: { contrast: 1.14, sat: 1.05, warm: 0.028, shadowLift: 0.014, highlightComp: 0.045 },
-    kultur: { contrast: 1.18, sat: 1.1, warm: 0.04, shadowLift: 0.01, highlightComp: 0.05 }
+    notr: {
+      contrast: 1.04,
+      sat: 0.99,
+      warm: 0,
+      shadowLift: 0.004,
+      highlightComp: 0.05,
+      fadedFilm: 8,
+      vignette: -5,
+      vibrance: 0.03,
+      shadowLuma: -2,
+      highlightLuma: -6
+    },
+    belgesel: {
+      contrast: 1.06,
+      sat: 0.97,
+      warm: 0.016,
+      shadowLift: 0.006,
+      highlightComp: 0.08,
+      fadedFilm: 20,
+      vignette: -8,
+      vibrance: 0.045,
+      shadowLuma: -3,
+      highlightLuma: -10
+    },
+    kultur: {
+      contrast: 1.08,
+      sat: 0.99,
+      warm: 0.022,
+      shadowLift: 0.006,
+      highlightComp: 0.07,
+      fadedFilm: 16,
+      vignette: -7,
+      vibrance: 0.05,
+      shadowLuma: -2,
+      highlightLuma: -8
+    }
   };
 
   function isSkin(r, g, b) {
@@ -163,7 +196,11 @@
       whites: round1(clamp((t.whiteIn - 0.92) * -180 + (1 - t.whiteIn) * 40, -30, 40)),
       blacks: round1(clamp((0.04 - t.blackIn) * 220, -40, 25)),
       saturation: round1(sat),
-      vibrance: round1(t.vibrance * 80)
+      vibrance: round1(t.vibrance * 80),
+      fadedFilm: t.fadedFilm,
+      vignette: t.vignette,
+      shadowLuma: t.shadowLuma,
+      highlightLuma: t.highlightLuma
     };
   }
 
@@ -196,13 +233,17 @@
       ((clamp(a.meanLuma, t.blackIn, t.whiteIn) - t.blackIn) / Math.max(0.08, t.whiteIn - t.blackIn)) *
         (t.whiteOut - t.blackOut) +
       t.blackOut;
-    t.exposure = clamp(log2(0.41 / Math.max(0.05, after)), -1.2, 1.2);
-    t.highlightComp = look.highlightComp + clamp(a.clippedPct / 80, 0, 0.08);
-    t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.012 : 0);
+    t.exposure = clamp(log2(0.36 / Math.max(0.05, after)), -1.0, 0.8);
+    t.highlightComp = look.highlightComp + clamp(a.clippedPct / 50, 0, 0.12);
+    t.shadowLift = look.shadowLift + (a.crushedPct > 1.5 ? 0.008 : 0);
     t.lookContrast = look.contrast;
     t.saturation = look.sat;
-    t.vibrance = 0.06;
+    t.vibrance = look.vibrance;
     t.warm = look.warm;
+    t.fadedFilm = look.fadedFilm;
+    t.vignette = look.vignette;
+    t.shadowLuma = look.shadowLuma;
+    t.highlightLuma = look.highlightLuma;
     if (hero && matchStrength > 0.01) {
       var selfMean = estimateMean(a, t);
       var heroWb = wbGains(hero);
@@ -225,7 +266,7 @@
           Math.max(0.08, heroT.whiteIn - heroT.blackIn)) *
           (heroT.whiteOut - heroT.blackOut) +
         heroT.blackOut;
-      heroT.exposure = clamp(log2(0.41 / Math.max(0.05, afterHero)), -1.2, 1.2);
+      heroT.exposure = clamp(log2(0.36 / Math.max(0.05, afterHero)), -1.0, 0.8);
       var heroMean = estimateMean(hero, heroT);
       var m = matchStrength;
       t.exposure += log2(Math.max(0.08, heroMean) / Math.max(0.08, selfMean)) * m;
@@ -251,7 +292,11 @@
         whites: g.whites,
         blacks: g.blacks,
         saturation: hero.saturation,
-        vibrance: hero.vibrance
+        vibrance: hero.vibrance,
+        fadedFilm: hero.fadedFilm,
+        vignette: hero.vignette,
+        shadowLuma: hero.shadowLuma,
+        highlightLuma: hero.highlightLuma
       });
     }
     return out;
